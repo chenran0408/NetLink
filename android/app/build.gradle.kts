@@ -6,17 +6,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val localProperties = Properties().apply {
-    val localPropertiesFile = rootProject.file("local.properties")
-    if (localPropertiesFile.exists()) {
-        localPropertiesFile.inputStream().use { load(it) }
+val signingProperties = Properties().apply {
+    val signingPropertiesFile = rootProject.file("key.properties")
+    if (signingPropertiesFile.exists()) {
+        signingPropertiesFile.inputStream().use { load(it) }
     }
 }
 
 val releaseStoreFile = file("keystore.jks")
-val releaseStorePassword = localProperties.getProperty("storePassword")
-val releaseKeyAlias = localProperties.getProperty("keyAlias")
-val releaseKeyPassword = localProperties.getProperty("keyPassword")
+val releaseStorePassword = signingProperties.getProperty("storePassword")
+val releaseKeyAlias = signingProperties.getProperty("keyAlias")
+val releaseKeyPassword = signingProperties.getProperty("keyPassword")
 val hasReleaseSigning = releaseStoreFile.exists() &&
     releaseStorePassword != null &&
     releaseKeyAlias != null &&

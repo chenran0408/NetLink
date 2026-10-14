@@ -102,7 +102,8 @@ jobs:
         run: |
           test -n "$KEYSTORE" && test -n "$KEY_ALIAS" && test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD"
           printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
-          printf 'keyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n' "$KEY_ALIAS" "$STORE_PASSWORD" "$KEY_PASSWORD" >> android/local.properties
+          printf 'keyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n' "$KEY_ALIAS" "$STORE_PASSWORD" "$KEY_PASSWORD" > android/key.properties
+          keytool -list -keystore android/app/keystore.jks -alias "$KEY_ALIAS" -storepass:env STORE_PASSWORD
 
       - name: Build signed Android packages
         env:
@@ -119,13 +120,18 @@ jobs:
         run: |
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           for abi in arm64-v8a armeabi-v7a x86_64; do
+            case "$abi" in
+              armeabi-v7a) code=2026102402 ;;
+              arm64-v8a) code=2026103402 ;;
+              x86_64) code=2026104402 ;;
+            esac
             apk="dist/NetLink-0.9.1-android-$abi.apk"
             test -f "$apk"
             "$tools/apksigner" verify --verbose --print-certs "$apk"
             "$tools/aapt" dump badging "$apk" | tee /tmp/badging.txt
             grep -q "package: name='io.github.chenran0408.netlink'" /tmp/badging.txt
             grep -q "application-label:'NetLink'" /tmp/badging.txt
-            grep -q "versionCode='2026101402'" /tmp/badging.txt
+            grep -q "versionCode='$code'" /tmp/badging.txt
           done
           cd dist
           sha256sum *.apk > SHA256SUMS
