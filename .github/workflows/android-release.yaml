@@ -48,6 +48,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: plugins/rust_api/rust
           cache-directories: .dart_tool/hooks_runner
 
