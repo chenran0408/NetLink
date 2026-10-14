@@ -1,0 +1,144 @@
+name: Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v0.9.0-netlink.1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+  GO_VERSION: '1.27.1'
+  NDK_VERSION: r28c
+
+jobs:
+  release:
+    if: github.repository == 'chenran0408/NetLink' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Check release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-netlink\.[0-9]+$ ]]
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/rust_api/rust
+          cache-directories: .dart_tool/hooks_runner
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          link-to-sdk: true
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate translated app text
+        run: |
+          yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
+          dart run intl_utils:generate
+          git restore pubspec.yaml
+          if ! git diff --quiet -- lib/l10n; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add lib/l10n
+            git commit -m 'build(l10n): generate netlink translations'
+            git push origin HEAD:main
+          fi
+
+      - name: Analyze and test
+        run: |
+          flutter analyze --no-fatal-infos
+          yq -i '.hooks.user_defines.setup.build_assets = false' pubspec.yaml
+          flutter test test/plugins/app_test.dart test/plugins/service_test.dart test/plugins/tile_test.dart test/setup_test.dart test/l10n test/lint/dynamic_message_key_test.dart
+          git restore pubspec.yaml
+
+      - name: Configure release signing
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE" && test -n "$KEY_ALIAS" && test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
+          printf 'keyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n' "$KEY_ALIAS" "$STORE_PASSWORD" "$KEY_PASSWORD" >> android/local.properties
+
+      - name: Build signed Android packages
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: dart setup.dart android --env stable -v
+
+      - name: Run Android unit tests
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest -Ptarget-platform=android-arm64 -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
+
+      - name: Verify packages and checksums
+        run: |
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            apk="dist/NetLink-0.9.0-android-$abi.apk"
+            test -f "$apk"
+            "$tools/apksigner" verify --verbose --print-certs "$apk"
+            "$tools/aapt" dump badging "$apk" | tee /tmp/badging.txt
+            grep -q "package: name='io.github.chenran0408.netlink'" /tmp/badging.txt
+            grep -q "application-label:'NetLink'" /tmp/badging.txt
+            grep -q "versionCode='2026101402'" /tmp/badging.txt
+          done
+          cd dist
+          sha256sum *.apk > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netlink-android
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" dist/*.apk dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title 'NetLink 0.9.0' --notes-file .github/netlink-release.md --latest
