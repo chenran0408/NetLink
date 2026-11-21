@@ -146,7 +146,7 @@ jobs:
             case "$arch" in
               armv7) offset=1000 ;;
               arm64) offset=2000 ;;
-              amd64) offset=5000 ;;
+              amd64) offset=4000 ;;
             esac
             code=$((APP_BUILD + offset))
             apk="dist/NetLink-dev-$APP_VERSION-android-$arch.apk"
