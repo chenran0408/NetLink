@@ -2,7 +2,7 @@ import 'package:fl_clash/common/fixed.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod/riverpod.dart';
 
@@ -286,6 +286,45 @@ void main() {
       expect(container.read(requestsProvider).length, 1);
     });
 
+    test('Requests.updateTraffic updates the requests it names', () {
+      TrackerInfo request(String id) => TrackerInfo(
+        id: id,
+        upload: 460,
+        start: DateTime.utc(2026),
+        metadata: const Metadata(network: 'tcp', host: 'example.com'),
+        chains: const ['Proxy'],
+        rule: 'DOMAIN',
+        rulePayload: 'example.com',
+      );
+      final notifier = container.read(requestsProvider.notifier);
+      notifier.value = FixedList(3);
+      notifier.addRequest(request('a'));
+      notifier.addRequest(request('b'));
+      var notifications = 0;
+      final subscription = container.listen(
+        requestsProvider.select((state) => state.revision),
+        (_, _) => notifications++,
+      );
+      addTearDown(subscription.close);
+
+      notifier.updateTraffic({'gone': (upload: 1, download: 1)});
+      expect(notifications, 0);
+
+      notifier.updateTraffic({
+        'a': (upload: 520, download: 257835),
+        'gone': (upload: 1, download: 1),
+      });
+
+      expect(notifications, 1);
+      expect(
+        container
+            .read(requestsProvider)
+            .list
+            .map((request) => (request.id, request.upload, request.download)),
+        [('a', 520, 257835), ('b', 460, 0)],
+      );
+    });
+
     test('Traffics.addTraffic reaches listeners and clear resets', () {
       container.read(trafficsProvider.notifier).value = FixedList(3);
       var notifications = 0;
@@ -476,6 +515,21 @@ void main() {
   group('CoreStatus provider', () {
     test('default is disconnected', () {
       expect(container.read(coreStatusProvider), CoreStatus.disconnected);
+    });
+
+    test('why the core stopped is kept until it starts again', () {
+      container.read(coreStopReasonProvider.notifier).value = 'pipe reset';
+      expect(container.read(coreStopReasonProvider), 'pipe reset');
+
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
+
+      expect(container.read(coreStopReasonProvider), isNull);
+    });
+
+    test('a core that reports nothing supports everything', () {
+      final capabilities = container.read(coreCapabilitiesStateProvider);
+
+      expect(capabilities.restricted, isFalse);
     });
   });
 }

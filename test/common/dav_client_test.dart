@@ -7,7 +7,8 @@ import 'package:fl_clash/common/dav_client.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart';
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+import '../helpers/app_paths.dart';
 
 class _FakeDAVClient extends DAVClient {
   _FakeDAVClient(super.dav, this.result, [this.onPing]);
@@ -20,21 +21,6 @@ class _FakeDAVClient extends DAVClient {
     onPing?.call();
     return result;
   }
-}
-
-class _FakePathProvider extends PathProviderPlatform {
-  final String root;
-
-  _FakePathProvider(this.root);
-
-  @override
-  Future<String?> getTemporaryPath() async => root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-
-  @override
-  Future<String?> getApplicationCachePath() async => root;
 }
 
 class _RecordedRequest {
@@ -213,11 +199,9 @@ void main() {
     late Directory root;
     HttpOverrides? testOverrides;
 
-    // appPath resolves the data directory once per process, so every test in
-    // this group has to share one root.
-    setUpAll(() {
+    setUpAll(() async {
       root = Directory.systemTemp.createTempSync('dav_client_test');
-      PathProviderPlatform.instance = _FakePathProvider(root.path);
+      await useAppPaths(root);
     });
 
     tearDownAll(() {
@@ -275,8 +259,14 @@ void main() {
       await buildClient().upload(archive.path);
 
       expect(server.requests.map((item) => item.method), ['MKCOL', 'PUT']);
-      expect(server.requests.last.path, '/$appName/backup.zip');
-      expect(server.files['/$appName/backup.zip'], archive.readAsBytesSync());
+      expect(
+        server.requests.last.path,
+        '/${Uri.encodeComponent(appName)}/backup.zip',
+      );
+      expect(
+        server.files['/${Uri.encodeComponent(appName)}/backup.zip'],
+        archive.readAsBytesSync(),
+      );
     });
 
     test('a base path prefixes every request', () async {
@@ -296,7 +286,7 @@ void main() {
 
     test('download writes the remote archive to the given path', () async {
       final payload = List<int>.generate(64, (index) => index);
-      server.files['/$appName/backup.zip'] = payload;
+      server.files['/${Uri.encodeComponent(appName)}/backup.zip'] = payload;
       final target = join(root.path, 'download.zip');
 
       await buildClient().download(target);

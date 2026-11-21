@@ -1,14 +1,15 @@
-import 'package:fl_clash/l10n/l10n.dart';
+import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/models/profile.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/profiles/preview.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
+import '../plugins/code_forge/support.dart' show initEditorNative;
 
 class _StubSetupAction extends SetupAction {
   static String yaml = '';
@@ -27,7 +28,8 @@ void main() {
   late ProviderContainer container;
 
   setUpAll(() async {
-    await AppLocalizations.load(const Locale('en'));
+    loadAppLocalizations(const Locale('en'));
+    await initEditorNative();
   });
 
   setUp(() {
@@ -64,7 +66,10 @@ void main() {
   }
 
   String? loaded(WidgetTester tester) {
-    return tester.widget<EditorView>(find.byType(EditorView)).content;
+    return tester
+        .state<EditorViewState>(find.byType(EditorView))
+        .controller
+        ?.text;
   }
 
   testWidgets('asks for the profile it was given and shows its yaml', (

@@ -1,19 +1,18 @@
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/common/theme.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/profiles/profiles.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../helpers/context_menu.dart';
+import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
 Profile urlProfile(String label) =>
@@ -44,6 +43,8 @@ Future<ProviderContainer> pumpProfiles(
   required List<Profile> profiles,
   int? currentProfileId,
   ValueListenable<bool>? isActive,
+  bool picker = false,
+  bool firstFrameOnly = false,
   List<Override> overrides = const [],
 }) async {
   tester.view.physicalSize = const Size(900, 800);
@@ -67,36 +68,30 @@ Future<ProviderContainer> pumpProfiles(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: HostApp(
         navigatorKey: globalState.navigatorKey,
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          ...GlobalMaterialLocalizations.delegates,
-        ],
-        supportedLocales: AppLocalizations.delegate.supportedLocales,
         builder: (context, child) {
-          globalState.measure = Measure.of(context, 1);
-          globalState.theme = CommonTheme.of(context, 1);
-          return child!;
+          return wrapAppScopes(context, child!);
         },
         home: isActive == null
-            ? const ProfilesView()
+            ? ProfilesView(picker: picker)
             : ValueListenableBuilder(
                 valueListenable: isActive,
                 builder: (_, isActive, child) =>
                     PageActivityScope(isActive: isActive, child: child!),
-                child: const ProfilesView(),
+                child: ProfilesView(picker: picker),
               ),
       ),
     ),
   );
-  await tester.pump();
+  if (!firstFrameOnly) {
+    await tester.pump();
+  }
   return container;
 }
 
 void main() {
-  testWidgets('a focused profile card opens its menu and reaches its '
-      'subscription info', (tester) async {
+  testWidgets('a focused profile card opens its menu', (tester) async {
     final profiles = [
       urlProfile('url 1'),
       Profile.normal(label: 'file 1'),
@@ -105,7 +100,7 @@ void main() {
     await pumpProfiles(tester, profiles: profiles);
 
     final cards = find
-        .byType(OutlinedButton)
+        .byType(Card)
         .evaluate()
         .map((element) => element.widget)
         .toList();
@@ -113,11 +108,8 @@ void main() {
     Future<void> focusCard(int index) async {
       for (var tab = 0; tab < 50; tab++) {
         final context = FocusManager.instance.primaryFocus?.context;
-        final focusedCard = context
-            ?.findAncestorWidgetOfExactType<OutlinedButton>();
-        final focusedAction = context
-            ?.findAncestorWidgetOfExactType<IconButton>();
-        if (focusedAction == null && identical(focusedCard, cards[index])) {
+        final focusedCard = context?.findAncestorWidgetOfExactType<Card>();
+        if (identical(focusedCard, cards[index])) {
           return;
         }
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
@@ -134,31 +126,14 @@ void main() {
 
       expect(
         find.descendant(
-          of: find.byType(CommonPopupMenu),
+          of: find.byType(PopupMenu),
           matching: find.text(currentAppLocalizations.delete),
         ),
         findsOneWidget,
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.byType(CommonPopupMenu), findsNothing);
-
-      if (profiles[profileIndex].subscriptionInfo == null) {
-        continue;
-      }
-      await focusCard(profileIndex);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump();
-
-      final context = FocusManager.instance.primaryFocus?.context;
-      expect(
-        context?.findAncestorWidgetOfExactType<IconButton>()?.tooltip,
-        currentAppLocalizations.subscriptionInfo,
-      );
-      expect(
-        context?.findAncestorWidgetOfExactType<ListItem>()?.key,
-        Key(profiles[profileIndex].id.toString()),
-      );
+      expect(find.byType(PopupMenu), findsNothing);
     }
   });
 
@@ -185,21 +160,66 @@ void main() {
           of: find.text('url'),
           matching: find.byType(ProfileItem),
         ),
-        matching: find.byType(CommonCircleLoading),
+        matching: find.byType(ActivityIndicator),
       ),
       findsOneWidget,
     );
   });
 
-  testWidgets('the usage icon opens the subscription dialog', (tester) async {
-    await pumpProfiles(tester, profiles: [urlProfile('url')]);
+  testWidgets('a card without traffic names its source under the title and '
+      'has no subscription info button', (tester) async {
+    final l = currentAppLocalizations;
+    await pumpProfiles(
+      tester,
+      profiles: [
+        Profile.normal(label: 'url', url: 'https://example.com/sub'),
+        Profile.normal(label: 'file'),
+        Profile.custom(label: 'mine'),
+      ],
+    );
 
-    await tester.tap(find.byTooltip(currentAppLocalizations.subscriptionInfo));
-    await tester.pumpAndSettle();
+    for (final (label, source) in [
+      ('url', l.remote),
+      ('file', l.local),
+      ('mine', l.custom),
+    ]) {
+      expect(
+        find.descendant(
+          of: find.ancestor(
+            of: find.text(label),
+            matching: find.byType(ProfileItem),
+          ),
+          matching: find.text(source),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.byTooltip(currentAppLocalizations.subscriptionInfo),
+      findsNothing,
+    );
+  });
 
-    expect(find.byType(CommonDialog), findsOneWidget);
-    expect(find.byType(SubscriptionInfoDetailView), findsOneWidget);
-    expect(find.text(currentAppLocalizations.subscriptionInfo), findsOneWidget);
+  testWidgets('a custom card counts its groups in place of an update time', (
+    tester,
+  ) async {
+    await pumpProfiles(
+      tester,
+      profiles: [Profile.custom(label: 'mine')],
+      overrides: [
+        profileGroupsCountProvider.overrideWith((_, _) => Stream.value(6)),
+      ],
+    );
+    await tester.pump();
+
+    Finder inCard(Finder matching) =>
+        find.descendant(of: find.byType(ProfileItem), matching: matching);
+    expect(inCard(find.widgetWithText(TonalChip, '6')), findsOneWidget);
+    expect(
+      inCard(find.byTooltip(currentAppLocalizations.proxyGroupsCount(6, '6'))),
+      findsOneWidget,
+    );
+    expect(inCard(find.byType(LastUpdateTimeText)), findsNothing);
   });
 
   Future<void> openProfileMenu(WidgetTester tester, String label) async {
@@ -214,12 +234,12 @@ void main() {
 
     await openProfileMenu(tester, 'url');
     expect(find.text(l.extend), findsOneWidget);
-    expect(find.text(l.finalConfig), findsNothing);
+    expect(find.text(l.runtimeConfig), findsNothing);
     expect(find.text(l.rename), findsNothing);
 
     await tester.tap(find.text(l.more).last);
     await tester.pumpAndSettle();
-    expect(find.text(l.finalConfig), findsOneWidget);
+    expect(find.text(l.runtimeConfig), findsOneWidget);
     expect(find.text(l.subscriptionInfo), findsNothing);
   });
 
@@ -230,7 +250,7 @@ void main() {
     await pumpProfiles(tester, profiles: [Profile.custom(label: 'mine')]);
 
     await openProfileMenu(tester, 'mine');
-    expect(find.text(l.finalConfig), findsOneWidget);
+    expect(find.text(l.runtimeConfig), findsOneWidget);
     expect(find.text(l.extend), findsNothing);
     expect(find.text(l.more), findsNothing);
   });
@@ -266,7 +286,7 @@ void main() {
 
     expect(find.textContaining('Home is still used'), findsOneWidget);
     expect(find.textContaining('used by Work'), findsOneWidget);
-    await tester.tap(find.text(currentAppLocalizations.confirm));
+    await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
 
     expect(action.deleted, [home.id]);
@@ -292,15 +312,34 @@ void main() {
       expect(rect.bottom, lessThanOrEqualTo(viewport.bottom));
     }
 
-    testWidgets('on first build', (tester) async {
+    testWidgets('in its first frame, which a tab switch snapshots', (
+      tester,
+    ) async {
       await pumpProfiles(
         tester,
         profiles: profiles,
         currentProfileId: selected.id,
+        firstFrameOnly: true,
+      );
+
+      expectRevealed(tester);
+
+      await tester.pumpAndSettle();
+      expectRevealed(tester);
+    });
+
+    testWidgets('not in a picker, whose bar is left empty', (tester) async {
+      await pumpProfiles(
+        tester,
+        profiles: profiles,
+        currentProfileId: selected.id,
+        picker: true,
       );
       await tester.pumpAndSettle();
 
-      expectRevealed(tester);
+      expect(find.text(profiles.first.label), findsOneWidget);
+      expect(find.text(selected.label), findsNothing);
+      expect(find.byType(AppBarActionButton), findsNothing);
     });
 
     testWidgets('not when the kept page becomes active again', (tester) async {

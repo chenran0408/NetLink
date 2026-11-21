@@ -19,6 +19,24 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
+  /// An empty [proxyName] forgets the group's pick.
+  void setSelection(int profileId, String groupName, String proxyName) {
+    final profile = ref.read(profilesProvider).getProfile(profileId);
+    if (profile == null ||
+        (profile.selectedMap[groupName] ?? '') == proxyName) {
+      return;
+    }
+    final selectedMap = Map<String, String>.from(profile.selectedMap);
+    if (proxyName.isEmpty) {
+      selectedMap.remove(groupName);
+    } else {
+      selectedMap[groupName] = proxyName;
+    }
+    ref
+        .read(profilesProvider.notifier)
+        .put(profile.copyWith(selectedMap: selectedMap));
+  }
+
   Future<void> deleteProfile(int id) async {
     await ref.read(profilesProvider.notifier).del(id);
     await clearEffect(id);
@@ -35,13 +53,16 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
-  Future<String> validateConfigWithData(String data) async {
+  Future<String?> validateConfigWithData(List<int> data) async {
     return _core.validateConfigWithData(data);
   }
 
   Future<void> autoUpdateProfiles() async {
-    for (final profile in ref.read(profilesProvider)) {
-      if (!profile.autoUpdate) continue;
+    for (final id in [
+      for (final profile in ref.read(profilesProvider)) profile.id,
+    ]) {
+      final profile = ref.read(profilesProvider).getProfile(id);
+      if (profile == null || !profile.autoUpdate) continue;
       final isNotNeedUpdate = profile.lastUpdateDate
           ?.add(profile.autoUpdateDuration)
           .isBeforeNow;
@@ -123,8 +144,11 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> updateProfiles() async {
-    for (final profile in ref.read(profilesProvider)) {
-      if (profile.type != ProfileType.url) continue;
+    for (final id in [
+      for (final profile in ref.read(profilesProvider)) profile.id,
+    ]) {
+      final profile = ref.read(profilesProvider).getProfile(id);
+      if (profile == null || profile.type != ProfileType.url) continue;
       await updateProfile(profile, showLoading: true);
     }
   }
@@ -138,8 +162,19 @@ class ProfilesAction extends _$ProfilesAction {
         : null;
     try {
       ref.read(profilesProvider.notifier).put(profile);
-      final newProfile = await profile.update(
+      final updated = await profile.update(
         validate: (path, key) => _core.validateProfile(path, key),
+      );
+      // The download can take minutes; edits and deletes made meanwhile win.
+      final latest = ref.read(profilesProvider).getProfile(profile.id);
+      if (latest == null) {
+        await clearEffect(profile.id);
+        return;
+      }
+      final newProfile = latest.copyWith(
+        label: latest.label.takeFirstValid([updated.label]),
+        subscriptionInfo: updated.subscriptionInfo,
+        lastUpdateDate: updated.lastUpdateDate,
       );
       ref.read(profilesProvider.notifier).put(newProfile);
       if (profile.id == ref.read(currentProfileIdProvider)) {
@@ -435,21 +470,10 @@ class ProfilesAction extends _$ProfilesAction {
         );
   }
 
-  void setProfileAndAutoApply(Profile profile) {
-    ref.read(profilesProvider.notifier).put(profile);
-    if (profile.id == ref.read(currentProfileIdProvider)) {
-      ref.read(setupActionProvider.notifier).applyProfileDebounce();
-    }
-  }
-
   Future<void> addProfileFormQrCode() async {
     final url = await globalState.safeRun(picker.pickerConfigQRCode);
     if (url == null) return;
     unawaited(addProfileFromLink(url));
-  }
-
-  void reorder(List<Profile> profiles) {
-    ref.read(profilesProvider.notifier).reorder(profiles);
   }
 
   Future<void> clearEffect(int profileId) async {
@@ -460,10 +484,7 @@ class ProfilesAction extends _$ProfilesAction {
       await profileFile.safeDelete(recursive: true);
     }
     try {
-      final error = await _core.clearEffect(profileId);
-      if (error.isNotEmpty) {
-        commonPrint.log(error, logLevel: LogLevel.warning);
-      }
+      await _core.clearEffect(profileId);
     } catch (error) {
       commonPrint.log(
         'clearEffect($profileId) failed: $error',

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dynamic_color/dynamic_color.dart';
 import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/common.dart';
@@ -11,16 +10,15 @@ import 'package:fl_clash/common/tray.dart';
 import 'package:fl_clash/common/window.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/disclaimer.dart';
 import 'package:fl_clash/views/navigation.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_color_utilities/palettes/tonal_palette.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 class Bootstrap {
@@ -34,6 +32,7 @@ class Bootstrap {
   }
 
   BootDecision _bootDecision = const BootDecision();
+  Object? _resetMixedPort;
 
   Future<ProviderContainer> init(int version) async {
     globalState.appEnv = const String.fromEnvironment(
@@ -48,10 +47,10 @@ class Bootstrap {
   }
 
   Future<DynamicColorSeeds> _initDynamicColor() async {
-    TonalPalette? primaryPalette;
+    ({Color light, Color dark})? systemSeeds;
     Color? accentColor;
     try {
-      primaryPalette = await _getSystemPrimaryPalette();
+      systemSeeds = await DynamicColorPlugin.getSystemSeeds();
     } catch (error) {
       commonPrint.log(
         'Failed to get core palette: $error',
@@ -67,8 +66,8 @@ class Bootstrap {
       );
     }
     return (
-      lightSeed: primaryPalette != null ? Color(primaryPalette.get(40)) : null,
-      darkSeed: primaryPalette != null ? Color(primaryPalette.get(80)) : null,
+      lightSeed: systemSeeds?.light,
+      darkSeed: systemSeeds?.dark,
       accentColor: accentColor ?? const Color(defaultPrimaryColor),
     );
   }
@@ -83,28 +82,20 @@ class Bootstrap {
     exit(0);
   }
 
-  Future<TonalPalette?> _getSystemPrimaryPalette() async {
-    final raw = await DynamicColorPlugin.channel.invokeMethod<List<dynamic>>(
-      DynamicColorPlugin.methodName,
-    );
-    if (raw == null || raw.length < TonalPalette.commonSize) {
-      return null;
-    }
-    return TonalPalette.fromList(
-      raw.sublist(0, TonalPalette.commonSize).cast<int>(),
-    );
-  }
-
   Future<ProviderContainer> _initData(
     int version,
     DynamicColorSeeds dynamicColor,
   ) async {
     await _claimDataDirectory();
     globalState.packageInfo = await PackageInfo.fromPlatform();
+    final storedConfig = await preferences.getConfigMap();
+    _resetMixedPort = unusableMixedPort(storedConfig?['patchClashConfig']);
     var config = await migration.run();
+    if (_resetMixedPort != null) {
+      await preferences.saveConfig(config);
+    }
     _bootDecision = await bootGuard.evaluate(
       profileId: config.currentProfileId,
-      crashlyticsEnabled: config.appSettingProps.crashlytics,
     );
     if (_bootDecision.recovery == BootRecovery.clearProfile) {
       config = config.copyWith(currentProfileId: null);
@@ -140,7 +131,7 @@ class Bootstrap {
         );
     final profiles = await database.profilesDao.query().get();
     container.read(profilesProvider.notifier).reorder(profiles);
-    await AppLocalizations.load(
+    loadAppLocalizations(
       getLocaleForString(config.appSettingProps.locale) ??
           WidgetsBinding.instance.platformDispatcher.locale,
     );
@@ -166,6 +157,7 @@ class Bootstrap {
     unawaited(
       _container.read(profilesActionProvider.notifier).autoUpdateProfiles(),
     );
+    unawaited(clearUpdateDownloads());
     unawaited(_container.read(commonActionProvider.notifier).autoCheckUpdate());
     unawaited(
       autoLaunch?.updateStatus(_container.read(appSettingProvider).autoLaunch),
@@ -180,13 +172,19 @@ class Bootstrap {
       return;
     }
     await _showCrashRecoveryTip();
-    await _showCrashlyticsTip();
+    if (_resetMixedPort case final value?) {
+      dialogs.showMixedPortReset(
+        value,
+        _container.read(patchClashConfigProvider).mixedPort,
+      );
+    }
     await _container.read(coreActionProvider.notifier).startCore();
     if (!_bootDecision.isDegraded) {
       await _container.read(setupActionProvider.notifier).initStatus();
     }
     _container.read(initProvider.notifier).value = true;
     unawaited(_container.read(resourcesActionProvider.notifier).autoUpdate());
+    unawaited(_container.read(mitmModulesActionProvider.notifier).autoUpdate());
     await bootGuard.markRunning();
     unawaited(_container.read(locationPermissionsProvider.notifier).refresh());
   }
@@ -196,16 +194,14 @@ class Bootstrap {
       case BootRecovery.none:
         return;
       case BootRecovery.skipAutoSetup:
-        await dialogs.showMessage(
+        await dialogs.showAlert(
           title: currentAppLocalizations.launchInterrupted,
-          cancelable: false,
           dismissible: false,
           message: TextSpan(text: currentAppLocalizations.launchInterruptedTip),
         );
       case BootRecovery.clearProfile:
-        await dialogs.showMessage(
+        await dialogs.showAlert(
           title: currentAppLocalizations.crashDetected,
-          cancelable: false,
           dismissible: false,
           message: TextSpan(
             text: currentAppLocalizations.crashDetectedTip(_failedProfileLabel),
@@ -237,22 +233,11 @@ class Bootstrap {
     await _container.read(systemActionProvider.notifier).handleExit(false);
   }
 
-  Future<void> _showCrashlyticsTip() async {
-    if (!system.isAndroid) return;
-    if (_container.read(
-      appSettingProvider.select((state) => state.crashlyticsTip),
-    )) {
-      return;
-    }
-    await dialogs.showMessage(
-      title: currentAppLocalizations.dataCollectionTip,
-      cancelable: false,
-      message: TextSpan(text: currentAppLocalizations.dataCollectionContent),
-    );
-    _container
-        .read(appSettingProvider.notifier)
-        .update((state) => state.copyWith(crashlyticsTip: true));
-  }
+  /// Unattended desktop installs, such as a container nobody watches, accept
+  /// up front: the core only starts after the disclaimer is accepted.
+  bool get _isDisclaimerAcceptedByEnvironment =>
+      system.isDesktop &&
+      Platform.environment['FLCLASH_ACCEPT_DISCLAIMER'] == '1';
 
   /// Android's exit only finishes the activity, so Dart keeps running after
   /// [SystemAction.handleExit] returns and must not go on to start the app.
@@ -263,7 +248,8 @@ class Bootstrap {
     if (acceptedVersion >= disclaimerVersion) {
       return true;
     }
-    final isDisclaimerAccepted = await requestDisclaimerConsent();
+    final isDisclaimerAccepted =
+        _isDisclaimerAcceptedByEnvironment || await requestDisclaimerConsent();
     if (!isDisclaimerAccepted) {
       await _container.read(systemActionProvider.notifier).handleExit();
       return false;

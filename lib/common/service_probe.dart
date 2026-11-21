@@ -8,6 +8,9 @@ import 'package:flutter/foundation.dart';
 const directOutbound = 'DIRECT';
 const routedOutbound = '';
 
+/// `probeErrorTimeout` in core/probe.go.
+const probeErrorTimeout = 'timeout';
+
 /// [id] must match the checker name registered in core/service_check.go.
 enum ServiceTarget {
   google('google', 'Google', 'google'),
@@ -22,7 +25,7 @@ enum ServiceTarget {
   spotify('spotify', 'Spotify', 'spotify'),
   tiktok('tiktok', 'TikTok', 'tiktok'),
   discord('discord', 'Discord', 'discord'),
-  bilibili('bilibili', 'bilibili', 'bilibili');
+  bilibili('bilibili', 'Bilibili', 'bilibili');
 
   const ServiceTarget(this.id, this.label, this.icon);
 
@@ -77,7 +80,8 @@ class ServiceCheck {
     this.region,
     this.checkedAt,
     this.coreEpoch = 0,
-    this.picksVersion = 0,
+    this.routeVersion = 0,
+    this.hits = const [],
   });
 
   factory ServiceCheck.of(ServiceCheckItem item) {
@@ -90,7 +94,8 @@ class ServiceCheck {
           ? DateTime.fromMillisecondsSinceEpoch(item.checkedAt)
           : null,
       coreEpoch: item.coreEpoch,
-      picksVersion: item.picksVersion,
+      routeVersion: item.routeVersion,
+      hits: item.hits,
     );
   }
 
@@ -100,7 +105,8 @@ class ServiceCheck {
   final String? region;
   final DateTime? checkedAt;
   final int coreEpoch;
-  final int picksVersion;
+  final int routeVersion;
+  final List<RouteHit> hits;
 
   String? get node => chains.firstOrNull;
 
@@ -113,7 +119,8 @@ class ServiceCheck {
       other.region == region &&
       other.checkedAt == checkedAt &&
       other.coreEpoch == coreEpoch &&
-      other.picksVersion == picksVersion;
+      other.routeVersion == routeVersion &&
+      listEquals(other.hits, hits);
 
   @override
   int get hashCode => Object.hash(
@@ -123,7 +130,8 @@ class ServiceCheck {
     region,
     checkedAt,
     coreEpoch,
-    picksVersion,
+    routeVersion,
+    Object.hashAll(hits),
   );
 
   @override
@@ -161,7 +169,6 @@ final Map<String, IpInfo Function(String)> ipInfoSources = {
   'https://api.ip.sb/geoip': _json(IpInfo.fromIpSbJson),
   'https://ipinfo.io/json': _json(IpInfo.fromIpInfoIoJson),
   'https://ipwho.is': _json(IpInfo.fromIpWhoIsJson),
-  'http://ip-api.com/json': _json(IpInfo.fromIpAPIJson),
   'https://get.geojs.io/v1/ip/geo.json': _json(IpInfo.fromGeoJsJson),
   'https://api.country.is': _json(IpInfo.fromCountryIsJson),
   'https://api.ipquery.io/?format=json': _json(IpInfo.fromIpQueryJson),
@@ -169,7 +176,7 @@ final Map<String, IpInfo Function(String)> ipInfoSources = {
 };
 
 /// Raw so the route stamp survives; [parseOutboundIp] reads the address.
-Future<OutboundIpResult?> lookupOutboundIp(
+Future<OutboundIpResult> lookupOutboundIp(
   CoreController core,
   String proxyName, {
   Duration timeout = outboundIpTimeoutDuration,
@@ -183,8 +190,8 @@ Future<OutboundIpResult?> lookupOutboundIp(
   );
 }
 
-IpInfo? parseOutboundIp(OutboundIpResult? result) {
-  if (result == null || result.error != null || result.body.isEmpty) {
+IpInfo? parseOutboundIp(OutboundIpResult result) {
+  if (result.error != null || result.body.isEmpty) {
     return null;
   }
   final parse = ipInfoSources[result.url];

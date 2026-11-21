@@ -35,8 +35,6 @@ internal interface ServiceStateHost {
 
     fun showToast(message: String)
 
-    fun setCrashlytics(enabled: Boolean)
-
     fun updateNotificationParams(params: NotificationParams)
 
     fun loadSharedState(): SharedState
@@ -49,7 +47,7 @@ internal interface ServiceStateHost {
 
     fun app(): AppGateway?
 
-    fun notifyStopped()
+    fun notifyStopped(failure: StartFailure? = null)
 
     suspend fun quickSetup(initParams: String, setupParams: String): Result<String>
 
@@ -102,8 +100,6 @@ internal object AndroidServiceStateHost : ServiceStateHost {
 
     override fun showToast(message: String) = GlobalState.application.showToast(message)
 
-    override fun setCrashlytics(enabled: Boolean) = GlobalState.setCrashlytics(enabled)
-
     override fun updateNotificationParams(params: NotificationParams) =
         ServiceConfig.updateNotificationParams(params)
 
@@ -139,8 +135,8 @@ internal object AndroidServiceStateHost : ServiceStateHost {
         }
     }
 
-    override fun notifyStopped() {
-        flutterEngine?.plugin<ServicePlugin>()?.notifyStopped()
+    override fun notifyStopped(failure: StartFailure?) {
+        flutterEngine?.plugin<ServicePlugin>()?.notifyStopped(failure)
     }
 
     override suspend fun quickSetup(initParams: String, setupParams: String): Result<String> =

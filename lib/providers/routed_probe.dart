@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/method.dart';
+import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:riverpod/riverpod.dart';
 
 import 'app.dart';
+import 'core.dart';
 import 'route_state.dart';
 
 enum ProbePhase { empty, probing, fresh, failed }
@@ -60,27 +63,41 @@ class ProbeAnswer<V> {
   const ProbeAnswer({
     this.value,
     this.coreEpoch,
-    this.picksVersion,
-    this.chains = const [],
+    this.routeVersion,
+    this.hits = const [],
+    this.timedOut = false,
   });
 
   final V? value;
   final int? coreEpoch;
-  final int? picksVersion;
-  final List<String> chains;
+  final int? routeVersion;
+  final List<RouteHit> hits;
+  final bool timedOut;
 }
 
 /// Keeps one answer per target and only ever shows one that still describes
-/// the current route. State changes are deferred to a microtask, so a widget
-/// may watch a target from its build.
+/// the current route. A new route version only asks again for the answers
+/// whose exits the Core finds moved, and a target asked on its own waits out
+/// [throttleDuration] since its last probe. State changes are deferred to a
+/// microtask, so a widget may watch a target from its build.
 mixin RoutedProbe<K, V>
     on AnyNotifier<RoutedProbeState<K, V>, RoutedProbeState<K, V>> {
   final Map<K, int> _watchers = {};
-  final Map<K, ({bool keepValue, bool forced, bool supersede})> _due = {};
+  final Map<K, _Due> _due = {};
   final Map<K, int> _inFlight = {};
   int _runs = 0;
   final Map<K, RouteState> _staleUnder = {};
+  final Set<K> _unverified = {};
+  final Map<K, _Landing<V>> _landed = {};
+  final Map<K, Timer> _cooling = {};
+  final Map<K, List<RouteHit>> _failures = {};
+  final Map<K, Timer> _retries = {};
+  final Map<K, int> _launchPicks = {};
   bool _scheduled = false;
+  bool _verifying = false;
+  bool _reverify = false;
+  Timer? _settle;
+  Duration _settleLength = Duration.zero;
   RouteState _route = const RouteState();
 
   /// May also answer targets it was not asked for; a fresh one of those is
@@ -92,12 +109,44 @@ mixin RoutedProbe<K, V>
   bool isFailure(V value) => false;
 
   @protected
+  Duration get settleDuration => probeSettleDuration;
+
+  @protected
+  Duration get moveSettleDuration => probeMoveSettleDuration;
+
+  @protected
+  Duration get throttleDuration => probeThrottleDuration;
+
+  @protected
+  Duration get confirmDelay => probeConfirmDelay;
+
+  @protected
+  Future<RouteCheck> checkRoutes(List<List<RouteHit>> routes) => ref
+      .read(coreHandlerProvider)
+      .checkRoutes(CheckRoutesParams(routes: routes));
+
+  @protected
   RoutedProbeState<K, V> buildProbe() {
+    ref.onDispose(() {
+      _settle?.cancel();
+      _settle = null;
+      for (final timer in [..._cooling.values, ..._retries.values]) {
+        timer.cancel();
+      }
+      _cooling.clear();
+      _retries.clear();
+    });
     _route = ref.read(routeTrackerProvider);
     ref.listen(routeTrackerProvider, _onRoute);
     ref.listen(appVisibleProvider, (_, visible) {
-      if (visible && _due.isNotEmpty) {
+      if (!visible) {
+        return;
+      }
+      if (_due.isNotEmpty) {
         _schedule();
+      }
+      if (_unverified.isNotEmpty) {
+        unawaited(_verify());
       }
     });
     return RoutedProbeState<K, V>();
@@ -112,7 +161,8 @@ mixin RoutedProbe<K, V>
     if (_watchers.length == 1) {
       ref.read(routeTrackerProvider.notifier).attach();
     }
-    if (_entryOf(target).phase != ProbePhase.fresh) {
+    if (_entryOf(target).phase != ProbePhase.fresh &&
+        !_landed.containsKey(target)) {
       _mark(target);
     }
   }
@@ -127,9 +177,15 @@ mixin RoutedProbe<K, V>
       return;
     }
     _watchers.remove(target);
+    _failures.remove(target);
+    _launchPicks.remove(target);
+    final retry = _retries.remove(target);
+    retry?.cancel();
     final due = _due[target];
     if (due != null && !due.forced) {
       _due.remove(target);
+    }
+    if (retry != null || due != null && !due.forced) {
       scheduleMicrotask(() => _forget(target));
     }
     if (_watchers.isEmpty && ref.mounted) {
@@ -144,20 +200,16 @@ mixin RoutedProbe<K, V>
         _watchers.containsKey(target) ||
         _due.containsKey(target) ||
         _inFlight.containsKey(target) ||
+        _landed.containsKey(target) ||
         !_entryOf(target).isLoading) {
       return;
     }
     state = RoutedProbeState(Map.of(state.entries)..remove(target));
   }
 
-  void retry(K target) {
-    if (_entryOf(target).phase == ProbePhase.failed) {
-      _mark(target);
-    }
-  }
-
   /// A refresh is the user asking, so it runs for targets nobody watches
-  /// too; the answer lands in the cache and stays until the route moves.
+  /// too, and waits neither for the route to settle nor for the throttle;
+  /// the answer lands in the cache and stays until the route moves.
   void refresh(Iterable<K> targets) {
     for (final target in targets) {
       _mark(target, keepValue: true, forced: true);
@@ -175,6 +227,8 @@ mixin RoutedProbe<K, V>
       keepValue: keepValue || (previous?.keepValue ?? false),
       forced: forced || (previous?.forced ?? false),
       supersede: previous?.supersede ?? false,
+      settle: false,
+      retry: false,
     );
     _schedule();
   }
@@ -194,19 +248,40 @@ mixin RoutedProbe<K, V>
     }
     final route = _route;
     final targets = <K>[];
+    final cooled = <K>[];
     final entries = Map<K, ProbeEntry<V>>.of(state.entries);
+    final waiting = <K, _Due>{};
     for (final MapEntry(key: target, value: due) in _due.entries) {
       final wanted = due.forced || _watchers.containsKey(target);
       if (!wanted || (_inFlight.containsKey(target) && !due.supersede)) {
         continue;
       }
+      final throttled =
+          !due.forced &&
+          !due.supersede &&
+          !due.retry &&
+          _cooling.containsKey(target) &&
+          _launchPicks[target] == route.picks;
+      if ((due.settle && _settle != null) || throttled) {
+        waiting[target] = due;
+        continue;
+      }
       targets.add(target);
-      entries[target] = ProbeEntry(
-        phase: ProbePhase.probing,
-        value: due.keepValue ? entries[target]?.value : null,
-      );
+      _landed.remove(target);
+      _unverified.remove(target);
+      _retries.remove(target)?.cancel();
+      _launchPicks[target] = route.picks;
+      if (!due.retry) {
+        cooled.add(target);
+        entries[target] = ProbeEntry(
+          phase: ProbePhase.probing,
+          value: due.keepValue ? entries[target]?.value : null,
+        );
+      }
     }
-    _due.clear();
+    _due
+      ..clear()
+      ..addAll(waiting);
     if (targets.isEmpty) {
       return;
     }
@@ -215,9 +290,25 @@ mixin RoutedProbe<K, V>
     for (final target in targets) {
       _inFlight[target] = run;
     }
+    for (final target in cooled) {
+      _cool(target);
+    }
     for (final target in targets) {
       unawaited(_run(target, route, run));
     }
+  }
+
+  void _cool(K target) {
+    _cooling.remove(target)?.cancel();
+    if (throttleDuration <= Duration.zero) {
+      return;
+    }
+    _cooling[target] = Timer(throttleDuration, () {
+      _cooling.remove(target);
+      if (ref.mounted && _due.containsKey(target)) {
+        _schedule();
+      }
+    });
   }
 
   /// A target a newer route asked again belongs to that run from then on.
@@ -239,27 +330,30 @@ mixin RoutedProbe<K, V>
     final entries = Map<K, ProbeEntry<V>>.of(state.entries);
     final answer = answers[target] ?? const ProbeAnswer();
     final stamp = _stampOf(answer, route);
-    final fresh = current.isFresh(stamp);
-    final behind = !fresh && current.isBehind(stamp);
-    if (!fresh) {
-      // Stale twice under one route: the Core and host disagree, stop asking.
+    if (!current.synced || current.hasMovedSince(stamp)) {
+      // Stale twice under one route: the Core and host disagree.
       if (_staleUnder[target] != current) {
         _staleUnder[target] = current;
         _invalidate(target, entries);
       } else if (_watchers.containsKey(target)) {
-        entries[target] = ProbeEntry(phase: ProbePhase.failed, stamp: stamp);
+        _show(
+          target,
+          ProbeEntry(phase: ProbePhase.failed, stamp: stamp),
+          entries,
+          timedOut: true,
+        );
       } else {
         entries.remove(target);
       }
     } else {
       _staleUnder.remove(target);
-      final value = answer.value;
-      final failed = value == null || isFailure(value);
-      entries[target] = ProbeEntry(
-        phase: failed ? ProbePhase.failed : ProbePhase.fresh,
-        value: value,
-        stamp: stamp,
-      );
+      final settled = _settledEntry(answer.value, stamp);
+      if (stamp.routeVersion == current.routeVersion) {
+        _show(target, settled, entries, timedOut: answer.timedOut);
+      } else {
+        _landed[target] = (entry: settled, timedOut: answer.timedOut);
+        _unverified.add(target);
+      }
     }
     for (final MapEntry(key: other, value: answer) in answers.entries) {
       final value = answer.value;
@@ -272,41 +366,136 @@ mixin RoutedProbe<K, V>
       }
       _inFlight.remove(other);
       _due.remove(other);
-      entries[other] = ProbeEntry(
-        phase: ProbePhase.fresh,
-        value: value,
-        stamp: stamp,
+      _landed.remove(other);
+      _unverified.remove(other);
+      _show(
+        other,
+        ProbeEntry(phase: ProbePhase.fresh, value: value, stamp: stamp),
+        entries,
       );
     }
     state = RoutedProbeState(entries);
-    if (behind) {
+    if (current.isBehind(stamp)) {
       ref.read(routeTrackerProvider.notifier).resync();
     }
     if (_due.isNotEmpty) {
       _schedule();
     }
+    if (_landed.isNotEmpty) {
+      unawaited(_verify());
+    }
+  }
+
+  ProbeEntry<V> _settledEntry(V? value, RouteStamp stamp) {
+    final failed = value == null || isFailure(value);
+    return ProbeEntry(
+      phase: failed ? ProbePhase.failed : ProbePhase.fresh,
+      value: value,
+      stamp: stamp,
+    );
+  }
+
+  /// A failure back before its deadline may be the route settling or a
+  /// connection something else closed, so it shows once a second one through
+  /// the same exits agrees.
+  void _show(
+    K target,
+    ProbeEntry<V> entry,
+    Map<K, ProbeEntry<V>> entries, {
+    bool timedOut = false,
+  }) {
+    _retries.remove(target)?.cancel();
+    if (entry.phase != ProbePhase.failed) {
+      _failures.remove(target);
+      entries[target] = entry;
+      return;
+    }
+    if (!_watchers.containsKey(target)) {
+      entries[target] = entry;
+      return;
+    }
+    final previous = _failures[target];
+    final hits = entry.stamp?.hits ?? const <RouteHit>[];
+    _failures[target] = hits;
+    if (timedOut || previous != null && _sameExits(previous, hits)) {
+      entries[target] = entry;
+      return;
+    }
+    _retries[target] = Timer(confirmDelay, () => _retry(target));
+  }
+
+  void _retry(K target) {
+    _retries.remove(target);
+    if (!ref.mounted ||
+        !_watchers.containsKey(target) ||
+        _inFlight.containsKey(target) ||
+        _due.containsKey(target)) {
+      return;
+    }
+    _due[target] = (
+      keepValue: true,
+      forced: false,
+      supersede: false,
+      settle: false,
+      retry: true,
+    );
+    _schedule();
+  }
+
+  void _forgetFailures(K target) {
+    _failures.remove(target);
+    _retries.remove(target)?.cancel();
   }
 
   RouteStamp _stampOf(ProbeAnswer<V> answer, RouteState route) => RouteStamp(
     coreEpoch: answer.coreEpoch ?? route.coreEpoch,
-    picksVersion: answer.picksVersion ?? route.picksVersion,
+    routeVersion: answer.routeVersion ?? route.routeVersion,
     hostEpoch: route.hostEpoch,
     proxied: route.proxied,
-    chains: answer.chains,
+    hits: answer.hits,
   );
 
   void _onRoute(RouteState? previous, RouteState next) {
     _route = next;
     final entries = Map<K, ProbeEntry<V>>.of(state.entries);
     final resumed = previous != null && next.resumes != previous.resumes;
-    // Picks flip whenever any url-test or fallback group re-picks, often
-    // faster than a probe finishes; restarting on them would never let one
-    // land. An answer's chain tells when it went through a group that moved.
+    final picked = previous != null && next.picks != previous.picks;
     final moved =
         previous != null &&
         (next.coreEpoch != previous.coreEpoch ||
             next.hostEpoch != previous.hostEpoch ||
             next.proxied != previous.proxied);
+    for (final MapEntry(key: target, value: landed) in {..._landed}.entries) {
+      if (next.hasMovedSince(landed.entry.stamp!)) {
+        _invalidate(target, entries);
+      }
+    }
+    if (moved) {
+      // A failure waiting for its second attempt has no stamp to go by.
+      for (final target in [..._retries.keys]) {
+        _invalidate(target, entries);
+      }
+    } else if (picked) {
+      // The user's own switch is no churn: asked now, once past the throttle.
+      _settle?.cancel();
+      _settle = null;
+      final failed = [
+        for (final MapEntry(:key, :value) in state.entries.entries)
+          if (value.phase == ProbePhase.failed) key,
+      ];
+      for (final target in {..._retries.keys, ..._inFlight.keys, ...failed}) {
+        if (_watchers.containsKey(target)) {
+          _forgetFailures(target);
+          _due[target] = (
+            keepValue: true,
+            forced: false,
+            supersede: true,
+            settle: false,
+            retry: false,
+          );
+        }
+      }
+    }
     for (final MapEntry(key: target, value: entry) in state.entries.entries) {
       if (_inFlight.containsKey(target)) {
         if (moved) {
@@ -318,31 +507,217 @@ mixin RoutedProbe<K, V>
       if (stamp == null) {
         continue;
       }
-      if (!next.isFresh(stamp)) {
+      if (next.hasMovedSince(stamp)) {
         _invalidate(target, entries);
       } else if (resumed &&
           entry.phase == ProbePhase.failed &&
           _watchers.containsKey(target)) {
-        _due[target] = (keepValue: false, forced: false, supersede: false);
+        _due[target] = (
+          keepValue: false,
+          forced: false,
+          supersede: false,
+          settle: false,
+          retry: false,
+        );
+      } else if (stamp.routeVersion != next.routeVersion) {
+        _unverified.add(target);
       }
+    }
+    if (moved && _settle != null) {
+      _settleWithin(moveSettleDuration);
     }
     if (!mapEquals(entries, state.entries)) {
       state = RoutedProbeState(entries);
+    }
+    if (_unverified.isNotEmpty) {
+      // Checked at once; moves within the window this opens wait for its end.
+      if (_settle == null) {
+        unawaited(_verify());
+      }
+      _settleWithin(settleDuration);
     }
     if (_due.isNotEmpty) {
       _schedule();
     }
   }
 
-  /// A stale entry is asked again while someone watches it and forgotten
-  /// otherwise; either way its old value is never shown.
+  /// Answers the route moved under are checked in one call once it settles,
+  /// except a fresh landing, which is held back until its own check.
+  Future<void> _verify() async {
+    if (_verifying) {
+      _reverify = true;
+      return;
+    }
+    if (!ref.mounted || !_route.live || !ref.read(appVisibleProvider)) {
+      return;
+    }
+    final stamps = <K, RouteStamp>{};
+    for (final target in {..._unverified}) {
+      final landed = _landed.containsKey(target);
+      if (!landed && _settle != null) {
+        continue;
+      }
+      _unverified.remove(target);
+      final stamp = (_landed[target]?.entry ?? state.entries[target])?.stamp;
+      if (stamp != null && !_inFlight.containsKey(target)) {
+        stamps[target] = stamp;
+      }
+    }
+    if (stamps.isEmpty) {
+      return;
+    }
+    _verifying = true;
+    _reverify = false;
+    RouteCheck? check;
+    try {
+      check = await checkRoutes([
+        for (final stamp in stamps.values) stamp.hits,
+      ]);
+    } catch (error) {
+      commonPrint.log(
+        'route check failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+    } finally {
+      _verifying = false;
+    }
+    if (!ref.mounted) {
+      return;
+    }
+    final current = _route;
+    final entries = Map<K, ProbeEntry<V>>.of(state.entries);
+    for (final (index, MapEntry(key: target, value: stamp))
+        in stamps.entries.indexed) {
+      final landing = _landed[target];
+      final entry = landing?.entry ?? entries[target];
+      if (entry == null ||
+          entry.stamp != stamp ||
+          _inFlight.containsKey(target)) {
+        continue;
+      }
+      _landed.remove(target);
+      if (current.hasMovedSince(stamp)) {
+        _invalidate(target, entries);
+        continue;
+      }
+      final held =
+          check != null &&
+          check.coreEpoch == stamp.coreEpoch &&
+          index < check.held.length &&
+          check.held[index];
+      if (!held) {
+        _reprobe(target, entries);
+        continue;
+      }
+      final verified = stamp.verifiedAt(
+        max(stamp.routeVersion, check.routeVersion),
+      );
+      final checked = ProbeEntry(
+        phase: entry.phase,
+        value: entry.value,
+        stamp: verified,
+      );
+      if (landing != null) {
+        _show(target, checked, entries, timedOut: landing.timedOut);
+      } else {
+        entries[target] = checked;
+      }
+      if (verified.routeVersion != current.routeVersion &&
+          verified.routeVersion > stamp.routeVersion) {
+        _unverified.add(target);
+      }
+    }
+    if (!mapEquals(entries, state.entries)) {
+      state = RoutedProbeState(entries);
+    }
+    if (check != null &&
+        (check.coreEpoch > current.coreEpoch ||
+            check.routeVersion > current.routeVersion)) {
+      ref.read(routeTrackerProvider.notifier).resync();
+    }
+    if (_due.isNotEmpty) {
+      _schedule();
+    }
+    if (_reverify) {
+      unawaited(_verify());
+    } else if (_unverified.isNotEmpty) {
+      _settleWithin(settleDuration);
+    }
+  }
+
+  /// Nothing made before a move stands, so the question waits for the
+  /// route to settle and then overtakes any probe still out.
   void _invalidate(K target, Map<K, ProbeEntry<V>> entries) {
+    _landed.remove(target);
+    _unverified.remove(target);
+    _forgetFailures(target);
     if (_watchers.containsKey(target)) {
       entries[target] = ProbeEntry(phase: ProbePhase.probing);
-      _due[target] = (keepValue: false, forced: false, supersede: true);
+      _due[target] = (
+        keepValue: false,
+        forced: false,
+        supersede: true,
+        settle: true,
+        retry: false,
+      );
+      _settleWithin(moveSettleDuration);
     } else {
       _inFlight.remove(target);
       entries.remove(target);
     }
   }
+
+  void _reprobe(K target, Map<K, ProbeEntry<V>> entries) {
+    _forgetFailures(target);
+    if (_watchers.containsKey(target)) {
+      entries[target] = ProbeEntry(phase: ProbePhase.probing);
+      _due[target] = (
+        keepValue: false,
+        forced: false,
+        supersede: false,
+        settle: false,
+        retry: false,
+      );
+    } else {
+      entries.remove(target);
+    }
+  }
+
+  void _settleWithin(Duration duration) {
+    if (_settle != null && _settleLength <= duration) {
+      return;
+    }
+    _settle?.cancel();
+    _settleLength = duration;
+    _settle = Timer(duration, _settled);
+  }
+
+  void _settled() {
+    _settle = null;
+    if (!ref.mounted) {
+      return;
+    }
+    if (_unverified.isNotEmpty) {
+      unawaited(_verify());
+    }
+    if (_due.isNotEmpty) {
+      _schedule();
+    }
+  }
 }
+
+bool _sameExits(List<RouteHit> previous, List<RouteHit> hits) {
+  final exits = {for (final hit in previous) hit.host: hit.exit};
+  return hits.every((hit) => (exits[hit.host] ?? hit.exit) == hit.exit);
+}
+
+/// [retry] asks a failure again behind what is on show, past the throttle.
+typedef _Due = ({
+  bool keepValue,
+  bool forced,
+  bool supersede,
+  bool settle,
+  bool retry,
+});
+
+typedef _Landing<V> = ({ProbeEntry<V> entry, bool timedOut});

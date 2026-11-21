@@ -33,9 +33,8 @@ _ProxyGroup _$ProxyGroupFromJson(Map<String, dynamic> json) => _ProxyGroup(
   hashKey: json['hash-key'] as String?,
   defaultSelected: json['default-selected'] as String?,
   emptyFallback: json['empty-fallback'] as String?,
-  includeAll: json['include-all'] as bool?,
-  includeAllProxies: json['include-all-proxies'] as bool?,
-  includeAllProviders: json['include-all-providers'] as bool?,
+  includeAllProxies: _readIncludeAll(json, 'include-all-proxies') as bool?,
+  includeAllProviders: _readIncludeAll(json, 'include-all-providers') as bool?,
   hidden: json['hidden'] as bool?,
   icon: json['icon'] as String?,
   order: json['order'] as String?,
@@ -68,7 +67,6 @@ Map<String, dynamic> _$ProxyGroupToJson(_ProxyGroup instance) =>
       'hash-key': instance.hashKey,
       'default-selected': instance.defaultSelected,
       'empty-fallback': instance.emptyFallback,
-      'include-all': instance.includeAll,
       'include-all-proxies': instance.includeAllProxies,
       'include-all-providers': instance.includeAllProviders,
       'hidden': instance.hidden,
@@ -95,12 +93,14 @@ _Proxy _$ProxyFromJson(Map<String, dynamic> json) => _Proxy(
   name: json['name'] as String,
   type: json['type'] as String,
   now: json['now'] as String?,
+  providerName: json['provider-name'] as String?,
 );
 
 Map<String, dynamic> _$ProxyToJson(_Proxy instance) => <String, dynamic>{
   'name': instance.name,
   'type': instance.type,
   'now': instance.now,
+  'provider-name': instance.providerName,
 };
 
 _CustomProxy _$CustomProxyFromJson(Map<String, dynamic> json) => _CustomProxy(
@@ -146,9 +146,24 @@ const _$ProxyFieldEnumMap = {
   ProxyField.flow: 'flow',
   ProxyField.wsPath: 'wsPath',
   ProxyField.wsHost: 'wsHost',
+  ProxyField.wsHeaders: 'wsHeaders',
+  ProxyField.wsMaxEarlyData: 'wsMaxEarlyData',
+  ProxyField.wsEarlyDataHeaderName: 'wsEarlyDataHeaderName',
+  ProxyField.wsHttpUpgrade: 'wsHttpUpgrade',
+  ProxyField.wsHttpUpgradeFastOpen: 'wsHttpUpgradeFastOpen',
+  ProxyField.httpMethod: 'httpMethod',
+  ProxyField.httpPath: 'httpPath',
+  ProxyField.httpHost: 'httpHost',
+  ProxyField.httpHeaders: 'httpHeaders',
+  ProxyField.h2Host: 'h2Host',
+  ProxyField.h2Path: 'h2Path',
   ProxyField.grpcServiceName: 'grpcServiceName',
   ProxyField.xhttpPath: 'xhttpPath',
   ProxyField.xhttpHost: 'xhttpHost',
+  ProxyField.mkcpSeed: 'mkcpSeed',
+  ProxyField.mkcpHeader: 'mkcpHeader',
+  ProxyField.mekyaUrl: 'mekyaUrl',
+  ProxyField.headers: 'headers',
   ProxyField.tls: 'tls',
   ProxyField.sni: 'sni',
   ProxyField.servername: 'servername',
@@ -160,6 +175,17 @@ const _$ProxyFieldEnumMap = {
   ProxyField.plugin: 'plugin',
   ProxyField.pluginMode: 'pluginMode',
   ProxyField.pluginHost: 'pluginHost',
+  ProxyField.pluginPath: 'pluginPath',
+  ProxyField.pluginUsername: 'pluginUsername',
+  ProxyField.pluginPassword: 'pluginPassword',
+  ProxyField.pluginVersion: 'pluginVersion',
+  ProxyField.pluginVersionHint: 'pluginVersionHint',
+  ProxyField.pluginRestlsScript: 'pluginRestlsScript',
+  ProxyField.pluginKey: 'pluginKey',
+  ProxyField.pluginCrypt: 'pluginCrypt',
+  ProxyField.pluginTls: 'pluginTls',
+  ProxyField.pluginMux: 'pluginMux',
+  ProxyField.pluginSkipCertVerify: 'pluginSkipCertVerify',
   ProxyField.udpOverTcp: 'udpOverTcp',
   ProxyField.protocolParam: 'protocolParam',
   ProxyField.obfsParam: 'obfsParam',
@@ -185,18 +211,6 @@ const _$ProxyFieldEnumMap = {
   ProxyField.routingMark: 'routingMark',
   ProxyField.ipVersion: 'ipVersion',
 };
-
-_RuleProvider _$RuleProviderFromJson(Map<String, dynamic> json) =>
-    _RuleProvider(name: json['name'] as String);
-
-Map<String, dynamic> _$RuleProviderToJson(_RuleProvider instance) =>
-    <String, dynamic>{'name': instance.name};
-
-_ProxyProvider _$ProxyProviderFromJson(Map<String, dynamic> json) =>
-    _ProxyProvider(name: json['name'] as String);
-
-Map<String, dynamic> _$ProxyProviderToJson(_ProxyProvider instance) =>
-    <String, dynamic>{'name': instance.name};
 
 _Sniffer _$SnifferFromJson(Map<String, dynamic> json) => _Sniffer(
   enable: json['enable'] as bool? ?? false,
@@ -260,13 +274,7 @@ Map<String, dynamic> _$SnifferConfigToJson(_SnifferConfig instance) =>
 _Tun _$TunFromJson(Map<String, dynamic> json) => _Tun(
   enable: json['enable'] as bool? ?? false,
   device: json['device'] as String? ?? appName,
-  autoRoute: json['auto-route'] as bool? ?? false,
   stack: $enumDecodeNullable(_$TunStackEnumMap, json['stack']) ?? TunStack.mips,
-  dnsHijack:
-      (json['dns-hijack'] as List<dynamic>?)
-          ?.map((e) => e as String)
-          .toList() ??
-      const ['any:53'],
   routeAddress:
       (json['route-address'] as List<dynamic>?)
           ?.map((e) => e as String)
@@ -278,7 +286,6 @@ _Tun _$TunFromJson(Map<String, dynamic> json) => _Tun(
   congestionController: json['congestion-controller'] == null
       ? defaultCongestionController
       : _congestionControllerFromJson(json['congestion-controller'] as String),
-  strictRoute: json['strict-route'] as bool? ?? false,
   routeExcludeAddress:
       (json['route-exclude-address'] as List<dynamic>?)
           ?.map((e) => e as String)
@@ -289,13 +296,10 @@ _Tun _$TunFromJson(Map<String, dynamic> json) => _Tun(
 Map<String, dynamic> _$TunToJson(_Tun instance) => <String, dynamic>{
   'enable': instance.enable,
   'device': instance.device,
-  'auto-route': instance.autoRoute,
   'stack': _$TunStackEnumMap[instance.stack]!,
-  'dns-hijack': instance.dnsHijack,
   'route-address': instance.routeAddress,
   'mtu': instance.mtu,
   'congestion-controller': instance.congestionController,
-  'strict-route': instance.strictRoute,
   'route-exclude-address': instance.routeExcludeAddress,
 };
 
@@ -475,18 +479,77 @@ Map<String, dynamic> _$NtpToJson(_Ntp instance) => <String, dynamic>{
 };
 
 _ProfileTun _$ProfileTunFromJson(Map<String, dynamic> json) => _ProfileTun(
+  mtu: (json['mtu'] as num?)?.toInt() ?? defaultTunMtu,
+  congestionController:
+      json['congestion-controller'] as String? ?? defaultCongestionController,
+  strictRoute: json['strict-route'] as bool? ?? false,
+  routeAddress:
+      (json['route-address'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
+  routeExcludeAddress:
+      (json['route-exclude-address'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
+  dnsHijack:
+      (json['dns-hijack'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      defaultDnsHijack,
+  udpTimeout: (json['udp-timeout'] as num?)?.toInt() ?? defaultTunUdpTimeout,
   disableIcmpForwarding: json['disable-icmp-forwarding'] as bool? ?? false,
+  gso: json['gso'] as bool? ?? false,
+  includeInterface:
+      (json['include-interface'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
   excludeInterface:
       (json['exclude-interface'] as List<dynamic>?)
           ?.map((e) => e as String)
+          .toList() ??
+      const [],
+  includeUid:
+      (json['include-uid'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toList() ??
+      const [],
+  excludeUid:
+      (json['exclude-uid'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toList() ??
+      const [],
+  excludeSrcPort:
+      (json['exclude-src-port'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toList() ??
+      const [],
+  excludeDstPort:
+      (json['exclude-dst-port'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
           .toList() ??
       const [],
 );
 
 Map<String, dynamic> _$ProfileTunToJson(_ProfileTun instance) =>
     <String, dynamic>{
+      'mtu': instance.mtu,
+      'congestion-controller': instance.congestionController,
+      'strict-route': instance.strictRoute,
+      'route-address': instance.routeAddress,
+      'route-exclude-address': instance.routeExcludeAddress,
+      'dns-hijack': instance.dnsHijack,
+      'udp-timeout': instance.udpTimeout,
       'disable-icmp-forwarding': instance.disableIcmpForwarding,
+      'gso': instance.gso,
+      'include-interface': instance.includeInterface,
       'exclude-interface': instance.excludeInterface,
+      'include-uid': instance.includeUid,
+      'exclude-uid': instance.excludeUid,
+      'exclude-src-port': instance.excludeSrcPort,
+      'exclude-dst-port': instance.excludeDstPort,
     };
 
 _ProfileOverrides _$ProfileOverridesFromJson(Map<String, dynamic> json) =>
@@ -607,8 +670,21 @@ const _$SnifferOverrideKeyEnumMap = {
 };
 
 const _$TunOverrideKeyEnumMap = {
+  TunOverrideKey.mtu: 'mtu',
+  TunOverrideKey.congestionController: 'congestion-controller',
+  TunOverrideKey.strictRoute: 'strict-route',
+  TunOverrideKey.routeAddress: 'route-address',
+  TunOverrideKey.routeExcludeAddress: 'route-exclude-address',
+  TunOverrideKey.dnsHijack: 'dns-hijack',
+  TunOverrideKey.udpTimeout: 'udp-timeout',
   TunOverrideKey.disableIcmpForwarding: 'disable-icmp-forwarding',
+  TunOverrideKey.gso: 'gso',
+  TunOverrideKey.includeInterface: 'include-interface',
   TunOverrideKey.excludeInterface: 'exclude-interface',
+  TunOverrideKey.includeUid: 'include-uid',
+  TunOverrideKey.excludeUid: 'exclude-uid',
+  TunOverrideKey.excludeSrcPort: 'exclude-src-port',
+  TunOverrideKey.excludeDstPort: 'exclude-dst-port',
 };
 
 _ProviderHealthCheck _$ProviderHealthCheckFromJson(Map<String, dynamic> json) =>
@@ -696,6 +772,7 @@ _Rule _$RuleFromJson(Map<String, dynamic> json) => _Rule(
   noResolve: json['noResolve'] as bool? ?? false,
   src: json['src'] as bool? ?? false,
   order: json['order'] as String?,
+  customExit: json['customExit'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$RuleToJson(_Rule instance) => <String, dynamic>{
@@ -708,6 +785,7 @@ Map<String, dynamic> _$RuleToJson(_Rule instance) => <String, dynamic>{
   'noResolve': instance.noResolve,
   'src': instance.src,
   'order': instance.order,
+  'customExit': instance.customExit,
 };
 
 const _$RuleActionEnumMap = {
@@ -771,11 +849,6 @@ _ClashConfig _$ClashConfigFromJson(Map<String, dynamic> json) => _ClashConfig(
   subRules: json['sub-rules'] == null
       ? const []
       : _genList(json['sub-rules'] as Map<String, dynamic>),
-  proxyTypeMap:
-      (json['proxyTypeMap'] as Map<String, dynamic>?)?.map(
-        (k, e) => MapEntry(k, e as String),
-      ) ??
-      const {},
 );
 
 Map<String, dynamic> _$ClashConfigToJson(_ClashConfig instance) =>
@@ -786,12 +859,13 @@ Map<String, dynamic> _$ClashConfigToJson(_ClashConfig instance) =>
       'proxy-providers': instance.proxyProviders,
       'rule-providers': instance.ruleProviders,
       'sub-rules': instance.subRules,
-      'proxyTypeMap': instance.proxyTypeMap,
     };
 
 _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
     _PatchClashConfig(
-      mixedPort: (json['mixed-port'] as num?)?.toInt() ?? defaultMixedPort,
+      mixedPort: json['mixed-port'] == null
+          ? defaultMixedPort
+          : _mixedPortFromJson(json['mixed-port']),
       socksPort: (json['socks-port'] as num?)?.toInt() ?? 0,
       port: (json['port'] as num?)?.toInt() ?? 0,
       redirPort: (json['redir-port'] as num?)?.toInt() ?? 0,
@@ -806,9 +880,9 @@ _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
           $enumDecodeNullable(
             _$FindProcessModeEnumMap,
             json['find-process-mode'],
-            unknownValue: FindProcessMode.off,
+            unknownValue: FindProcessMode.strict,
           ) ??
-          FindProcessMode.off,
+          FindProcessMode.strict,
       interfaceNameMode:
           $enumDecodeNullable(
             _$InterfaceNameModeEnumMap,
@@ -834,6 +908,14 @@ _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
       dnsOverrideKeys: json['dns-override-keys'] == null
           ? const {}
           : _dnsOverrideKeysFromJson(json['dns-override-keys'] as List),
+      tunOverride: json['tun-override'] == null
+          ? defaultProfileTun
+          : ProfileTun.safeFromJson(
+              json['tun-override'] as Map<String, Object?>,
+            ),
+      tunOverrideKeys: json['tun-override-keys'] == null
+          ? const {}
+          : _tunOverrideKeysFromJson(json['tun-override-keys'] as List),
       geoXUrl: json['geox-url'] == null
           ? defaultGeoXUrl
           : _geoXUrlFromJson(json['geox-url'] as Map<String, Object?>?),
@@ -853,8 +935,15 @@ _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
             (k, e) => MapEntry(k, e as String),
           ) ??
           const {},
-      geoAutoUpdate: json['geo-auto-update'] as bool? ?? false,
+      geoAutoUpdate: json['geo-auto-update'] as bool? ?? true,
       geoUpdateInterval: (json['geo-update-interval'] as num?)?.toInt() ?? 24,
+      testUrl: json['test-url'] as String? ?? defaultTestUrl,
+      generalOverrideKeys: json['general-override-keys'] == null
+          ? const {}
+          : _generalOverrideKeysFromJson(json['general-override-keys'] as List),
+      mitm: json['mitm'] == null
+          ? defaultMitm
+          : Mitm.fromJson(json['mitm'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$PatchClashConfigToJson(_PatchClashConfig instance) =>
@@ -883,6 +972,10 @@ Map<String, dynamic> _$PatchClashConfigToJson(_PatchClashConfig instance) =>
       'dns-override-keys': instance.dnsOverrideKeys
           .map((e) => _$DnsOverrideKeyEnumMap[e]!)
           .toList(),
+      'tun-override': instance.tunOverride,
+      'tun-override-keys': instance.tunOverrideKeys
+          .map((e) => _$TunOverrideKeyEnumMap[e]!)
+          .toList(),
       'geox-url': _geoXUrlToJson(instance.geoXUrl),
       'geodata-loader': _$GeodataLoaderEnumMap[instance.geodataLoader]!,
       'global-ua': instance.globalUa,
@@ -892,6 +985,11 @@ Map<String, dynamic> _$PatchClashConfigToJson(_PatchClashConfig instance) =>
       'hosts': instance.hosts,
       'geo-auto-update': instance.geoAutoUpdate,
       'geo-update-interval': instance.geoUpdateInterval,
+      'test-url': instance.testUrl,
+      'general-override-keys': instance.generalOverrideKeys
+          .map((e) => _$GeneralOverrideKeyEnumMap[e]!)
+          .toList(),
+      'mitm': instance.mitm,
     };
 
 const _$ModeEnumMap = {
@@ -910,7 +1008,7 @@ const _$LogLevelEnumMap = {
 
 const _$FindProcessModeEnumMap = {
   FindProcessMode.always: 'always',
-  FindProcessMode.off: 'off',
+  FindProcessMode.strict: 'strict',
 };
 
 const _$InterfaceNameModeEnumMap = {
@@ -927,4 +1025,38 @@ const _$GeodataLoaderEnumMap = {
 const _$ExternalControllerStatusEnumMap = {
   ExternalControllerStatus.close: '',
   ExternalControllerStatus.open: '127.0.0.1:9090',
+};
+
+const _$GeneralOverrideKeyEnumMap = {
+  GeneralOverrideKey.testUrl: 'test-url',
+  GeneralOverrideKey.unifiedDelay: 'unified-delay',
+  GeneralOverrideKey.tcpConcurrent: 'tcp-concurrent',
+  GeneralOverrideKey.ipv6: 'ipv6',
+  GeneralOverrideKey.geodataLoader: 'geodata-loader',
+};
+
+_Mitm _$MitmFromJson(Map<String, dynamic> json) => _Mitm(
+  enable: json['enable'] as bool? ?? false,
+  hostname:
+      (json['hostname'] as List<dynamic>?)?.map((e) => e as String).toList() ??
+      const [],
+  skipServerCertVerify: json['skip-server-cert-verify'] as bool? ?? false,
+  autoQuicBlock: json['auto-quic-block'] as bool? ?? true,
+  h2: json['h2'] as bool? ?? false,
+  decryptUntrusted: json['decrypt-untrusted'] as bool? ?? false,
+  trustedFingerprint: json['trusted-fingerprint'] as String?,
+  capture: json['capture'] as bool? ?? false,
+  captureEntries: (json['capture-entries'] as num?)?.toInt(),
+);
+
+Map<String, dynamic> _$MitmToJson(_Mitm instance) => <String, dynamic>{
+  'enable': instance.enable,
+  'hostname': instance.hostname,
+  'skip-server-cert-verify': instance.skipServerCertVerify,
+  'auto-quic-block': instance.autoQuicBlock,
+  'h2': instance.h2,
+  'decrypt-untrusted': instance.decryptUntrusted,
+  'trusted-fingerprint': instance.trustedFingerprint,
+  'capture': instance.capture,
+  'capture-entries': instance.captureEntries,
 };

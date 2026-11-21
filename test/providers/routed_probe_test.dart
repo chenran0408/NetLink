@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -18,7 +19,27 @@ class _MockCore extends Mock implements CoreHandlerInterface {}
 class _Probe extends Notifier<RoutedProbeState<String, String>>
     with RoutedProbe<String, String> {
   final calls = <String>[];
+  final routes = <RouteState>[];
   final pending = <Completer<Map<String, ProbeAnswer<String>>>>[];
+  final checks = <List<List<RouteHit>>>[];
+  final moved = <String>{};
+  Future<RouteCheck> Function()? checkAnswer;
+  Duration settle = Duration.zero;
+  Duration moveSettle = Duration.zero;
+  Duration throttle = Duration.zero;
+  Duration? retry;
+
+  @override
+  Duration get settleDuration => settle;
+
+  @override
+  Duration get moveSettleDuration => moveSettle;
+
+  @override
+  Duration get throttleDuration => throttle;
+
+  @override
+  Duration get confirmDelay => retry ?? super.confirmDelay;
 
   @override
   RoutedProbeState<String, String> build() => buildProbe();
@@ -32,9 +53,30 @@ class _Probe extends Notifier<RoutedProbeState<String, String>>
     RouteState route,
   ) {
     calls.add(target);
+    routes.add(route);
     final completer = Completer<Map<String, ProbeAnswer<String>>>();
     pending.add(completer);
     return completer.future;
+  }
+
+  @override
+  Future<RouteCheck> checkRoutes(List<List<RouteHit>> routes) {
+    checks.add(routes);
+    final answer = checkAnswer;
+    if (answer != null) {
+      return answer();
+    }
+    final route = ref.read(routeTrackerProvider);
+    return Future.value(
+      RouteCheck(
+        coreEpoch: route.coreEpoch,
+        routeVersion: route.routeVersion,
+        held: [
+          for (final hits in routes)
+            hits.isNotEmpty && hits.every((hit) => !moved.contains(hit.host)),
+        ],
+      ),
+    );
   }
 
   void answer(Map<String, ProbeAnswer<String>> answers) =>
@@ -46,16 +88,19 @@ final _probeProvider =
 
 const _route = RouteState(
   coreEpoch: 1,
-  picksVersion: 1,
-  picks: {'Proxy': 'HK-01', 'Auto': 'JP-01'},
+  routeVersion: 1,
   hostEpoch: 1,
   proxied: true,
   synced: true,
   live: true,
 );
 
-ProbeAnswer<String> _ok(List<String> chains) =>
-    ProbeAnswer(value: 'ok', coreEpoch: 1, picksVersion: 1, chains: chains);
+ProbeAnswer<String> _ok(String host, {int routeVersion = 1}) => ProbeAnswer(
+  value: 'ok',
+  coreEpoch: 1,
+  routeVersion: routeVersion,
+  hits: [RouteHit(host: host, exit: host)],
+);
 
 void main() {
   ProviderContainer build({RouteState route = _route}) {
@@ -70,6 +115,11 @@ void main() {
   RouteTracker trackerOf(ProviderContainer container) =>
       container.read(routeTrackerProvider.notifier);
 
+  void moveRoute(ProviderContainer container, int routeVersion) =>
+      trackerOf(container).applySnapshot(
+        RouteSnapshot(coreEpoch: 1, routeVersion: routeVersion, running: true),
+      );
+
   test('probes a watched target and keeps the answer while fresh', () async {
     final container = build();
     final probe = container.read(_probeProvider.notifier);
@@ -80,9 +130,7 @@ void main() {
     expect(probe.calls, ['a']);
     expect(container.read(_probeProvider).isLoading('a'), isTrue);
 
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
     final entry = container.read(_probeProvider).entryOf('a');
     expect(entry.phase, ProbePhase.fresh);
@@ -98,9 +146,7 @@ void main() {
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
     await pumpEventQueue();
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
     probe.unwatch('a');
 
@@ -112,37 +158,110 @@ void main() {
   });
 
   test(
-    'a route change re-probes only the entries that went through it',
+    'a new route version asks again only where the Core finds the exit moved',
     () async {
       final container = build();
       final probe = container.read(_probeProvider.notifier);
       probe.watch('a');
       probe.watch('b');
       await pumpEventQueue();
-      expect(probe.calls, ['a', 'b']);
-      probe.answer({
-        'a': _ok(['HK-01', 'Proxy']),
-      });
-      probe.answer({
-        'b': _ok(['JP-01', 'Auto']),
-      });
+      probe.answer({'a': _ok('a.example:443')});
+      probe.answer({'b': _ok('b.example:443')});
       await pumpEventQueue();
 
-      trackerOf(container).applySnapshot(
-        const RouteSnapshot(
-          coreEpoch: 1,
-          picksVersion: 2,
-          picks: {'Proxy': 'HK-02', 'Auto': 'JP-01'},
-        ),
-      );
+      probe.moved.add('a.example:443');
+      moveRoute(container, 2);
       await pumpEventQueue();
 
+      expect(probe.checks, [
+        [
+          [const RouteHit(host: 'a.example:443', exit: 'a.example:443')],
+          [const RouteHit(host: 'b.example:443', exit: 'b.example:443')],
+        ],
+      ]);
       expect(probe.calls, ['a', 'b', 'a']);
       final state = container.read(_probeProvider);
       expect(state.isLoading('a'), isTrue);
       expect(state.entryOf('b').phase, ProbePhase.fresh);
+      expect(state.entryOf('b').stamp?.routeVersion, 2);
     },
   );
+
+  test('an unwatched answer whose exit moved is dropped', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.refresh(['a']);
+    await pumpEventQueue();
+    probe.answer({'a': _ok('a.example:443')});
+    await pumpEventQueue();
+
+    probe.moved.add('a.example:443');
+    moveRoute(container, 2);
+    await pumpEventQueue();
+
+    expect(container.read(_probeProvider).entries, isEmpty);
+    expect(probe.calls, ['a']);
+  });
+
+  test('a route check the Core cannot answer asks again', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..checkAnswer = () => Future.error(Exception('no_response'));
+    probe.watch('a');
+    await pumpEventQueue();
+    probe.answer({'a': _ok('a.example:443')});
+    await pumpEventQueue();
+
+    moveRoute(container, 2);
+    await pumpEventQueue();
+
+    expect(probe.calls, ['a', 'a']);
+  });
+
+  test('an answer without hits never holds', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await pumpEventQueue();
+    probe.answer({
+      'a': const ProbeAnswer(value: 'ok', coreEpoch: 1, routeVersion: 1),
+    });
+    await pumpEventQueue();
+
+    moveRoute(container, 2);
+    await pumpEventQueue();
+
+    expect(probe.calls, ['a', 'a']);
+  });
+
+  test('a move that lands during a check is checked again', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await pumpEventQueue();
+    probe.answer({'a': _ok('a.example:443')});
+    await pumpEventQueue();
+
+    final check = Completer<RouteCheck>();
+    probe.checkAnswer = () => check.future;
+    moveRoute(container, 2);
+    await pumpEventQueue();
+    expect(probe.checks, hasLength(1));
+
+    probe.checkAnswer = null;
+    moveRoute(container, 3);
+    await pumpEventQueue();
+    check.complete(
+      const RouteCheck(coreEpoch: 1, routeVersion: 2, held: [true]),
+    );
+    await pumpEventQueue();
+
+    expect(probe.checks, hasLength(2));
+    expect(probe.calls, ['a']);
+    final entry = container.read(_probeProvider).entryOf('a');
+    expect(entry.phase, ProbePhase.fresh);
+    expect(entry.stamp?.routeVersion, 3);
+  });
 
   test('a route change asks again without waiting for the old probe', () async {
     final container = build();
@@ -154,81 +273,509 @@ void main() {
     await pumpEventQueue();
     expect(probe.calls, ['a', 'a']);
 
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
     expect(probe.calls, hasLength(2));
     expect(container.read(_probeProvider).isLoading('a'), isTrue);
 
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
     expect(container.read(_probeProvider).entryOf('a').phase, ProbePhase.fresh);
   });
 
-  test('a pick change lets the running probe land', () async {
+  testWidgets('a burst of route changes is probed once it settles', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..settle = probeSettleDuration
+      ..moveSettle = probeMoveSettleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    for (var i = 0; i < 3; i++) {
+      trackerOf(container).bumpHostEpoch();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+    expect(probe.calls, ['a']);
+
+    await tester.pump(probeMoveSettleDuration);
+    expect(probe.calls, ['a', 'a']);
+    expect(probe.routes.last.hostEpoch, _route.hostEpoch + 3);
+  });
+
+  testWidgets('a move is checked at once, the ones on its heels together', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..settle = probeSettleDuration
+      ..moveSettle = probeMoveSettleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    moveRoute(container, 2);
+    await tester.pump();
+    expect(probe.checks, hasLength(1));
+    expect(container.read(_probeProvider).entryOf('a').stamp?.routeVersion, 2);
+
+    moveRoute(container, 3);
+    await tester.pump(const Duration(seconds: 1));
+    moveRoute(container, 4);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(probe.checks, hasLength(1));
+
+    await tester.pump(probeSettleDuration);
+    expect(probe.checks, hasLength(2));
+    expect(container.read(_probeProvider).entryOf('a').stamp?.routeVersion, 4);
+    expect(probe.calls, ['a']);
+  });
+
+  testWidgets('an exit that keeps moving is asked at most once a throttle', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..throttle = const Duration(seconds: 5);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    probe.moved.add('a.example:443');
+    for (var version = 2; version < 5; version++) {
+      moveRoute(container, version);
+      await tester.pump(const Duration(seconds: 1));
+    }
+    expect(probe.calls, ['a']);
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(probe.calls, ['a', 'a']);
+    expect(probe.routes.last.routeVersion, 4);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('a refresh and a move both skip the throttle', (tester) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..throttle = const Duration(seconds: 5);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    probe.refresh(['a']);
+    await tester.pump();
+    expect(probe.calls, ['a', 'a']);
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    trackerOf(container).bumpHostEpoch();
+    await tester.pump(Duration.zero);
+    expect(probe.calls, ['a', 'a', 'a']);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('a refresh does not wait for the route to settle', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..settle = probeSettleDuration
+      ..moveSettle = probeMoveSettleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    trackerOf(container).bumpHostEpoch();
+    await tester.pump();
+    probe.refresh(['a']);
+    await tester.pump();
+    expect(probe.calls, ['a', 'a']);
+
+    await tester.pump(probeSettleDuration);
+    expect(probe.calls, ['a', 'a']);
+  });
+
+  test('an answer the route moved under shows once its check holds', () async {
     final container = build();
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
     probe.watch('b');
     await pumpEventQueue();
 
-    trackerOf(container).applySnapshot(
-      const RouteSnapshot(
-        coreEpoch: 1,
-        picksVersion: 2,
-        picks: {'Proxy': 'HK-02', 'Auto': 'JP-01'},
-      ),
-    );
+    moveRoute(container, 2);
     await pumpEventQueue();
     expect(probe.calls, hasLength(2));
+    expect(probe.checks, isEmpty);
 
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
-    probe.answer({
-      'b': _ok(['JP-01', 'Auto']),
-    });
+    final check = Completer<RouteCheck>();
+    probe.checkAnswer = () => check.future;
+    probe.answer({'a': _ok('a.example:443')});
+    probe.answer({'b': _ok('b.example:443')});
     await pumpEventQueue();
+    expect(probe.checks, [
+      [
+        [const RouteHit(host: 'a.example:443', exit: 'a.example:443')],
+      ],
+    ]);
+    var state = container.read(_probeProvider);
+    expect(state.isLoading('a'), isTrue);
+    expect(state.isLoading('b'), isTrue);
+
+    probe.checkAnswer = null;
+    check.complete(
+      const RouteCheck(coreEpoch: 1, routeVersion: 2, held: [false]),
+    );
+    await pumpEventQueue();
+
+    expect(probe.checks, hasLength(2));
     expect(probe.calls, ['a', 'b', 'a']);
-    final state = container.read(_probeProvider);
+    state = container.read(_probeProvider);
     expect(state.isLoading('a'), isTrue);
     expect(state.entryOf('b').phase, ProbePhase.fresh);
+    expect(state.entryOf('b').stamp?.routeVersion, 2);
   });
 
-  test('a failed answer waits for a retry or the app resuming', () async {
+  const down = ProbeAnswer(value: 'down', coreEpoch: 1, routeVersion: 1);
+  const timedOut = ProbeAnswer(
+    value: 'down',
+    coreEpoch: 1,
+    routeVersion: 1,
+    timedOut: true,
+  );
+
+  testWidgets('a failure that came back early shows once a second agrees', (
+    tester,
+  ) async {
     final container = build();
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
-    await pumpEventQueue();
+    await tester.pump();
     probe.answer(const {});
-    await pumpEventQueue();
+    await tester.pump();
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+    expect(probe.calls, hasLength(1));
+
+    await tester.pump(probeConfirmDelay);
+    expect(probe.calls, hasLength(2));
+    probe.answer({'a': down});
+    await tester.pump();
+
+    final entry = container.read(_probeProvider).entryOf('a');
+    expect(entry.phase, ProbePhase.failed);
+    expect(entry.value, 'down');
+    container.dispose();
+  });
+
+  testWidgets('a failure through an exit the route moved to is confirmed', (
+    tester,
+  ) async {
+    ProbeAnswer<String> downVia(String exit, int routeVersion) => ProbeAnswer(
+      value: 'down',
+      coreEpoch: 1,
+      routeVersion: routeVersion,
+      hits: [RouteHit(host: 'a.example:443', exit: exit)],
+    );
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': downVia('A', 1)});
+    await tester.pump();
+
+    moveRoute(container, 2);
+    await tester.pump(probeConfirmDelay);
+    expect(probe.calls, hasLength(2));
+    probe.answer({'a': downVia('B', 2)});
+    await tester.pump();
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+
+    await tester.pump(probeConfirmDelay);
+    expect(probe.calls, hasLength(3));
+    probe.answer({'a': downVia('B', 2)});
+    await tester.pump();
+    expect(
+      container.read(_probeProvider).entryOf('a').phase,
+      ProbePhase.failed,
+    );
+    container.dispose();
+  });
+
+  testWidgets('a second attempt that answers never shows the failure', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    final phases = <ProbePhase>[];
+    container.listen(
+      _probeProvider,
+      (_, state) => phases.add(state.entryOf('a').phase),
+    );
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': down});
+    await tester.pump(probeConfirmDelay);
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    expect(phases, [ProbePhase.probing, ProbePhase.fresh]);
+  });
+
+  testWidgets('a failure that timed out shows at once', (tester) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': timedOut});
+    await tester.pump();
+
+    expect(
+      container.read(_probeProvider).entryOf('a').phase,
+      ProbePhase.failed,
+    );
+    container.dispose();
+  });
+
+  testWidgets('a failure on show is left alone while the route holds', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    probe.watch('b');
+    await tester.pump();
+    probe.answer({'a': timedOut});
+    probe.answer({'b': down});
+    await tester.pump(probeConfirmDelay);
+    probe.answer({'b': down});
+    await tester.pump();
+
+    await tester.pump(const Duration(minutes: 5));
+    expect(probe.calls, ['a', 'b', 'b']);
+    container.dispose();
+  });
+
+  testWidgets('a retry skips the throttle', (tester) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..throttle = probeThrottleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': down});
+    await tester.pump(probeConfirmDelay);
+
+    expect(probe.calls, hasLength(2));
+    container.dispose();
+  });
+
+  testWidgets('a failure nobody watches is shown and left alone', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.refresh(['a']);
+    await tester.pump();
+    probe.answer({'a': down});
+    await tester.pump();
     expect(
       container.read(_probeProvider).entryOf('a').phase,
       ProbePhase.failed,
     );
 
+    await tester.pump(const Duration(minutes: 1));
+    expect(probe.calls, hasLength(1));
+  });
+
+  testWidgets('a target left before its second attempt stops loading', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
-    await pumpEventQueue();
+    await tester.pump();
+    probe.answer({'a': down});
+    await tester.pump();
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+
+    probe.unwatch('a');
+    await tester.pump(probeConfirmDelay);
+
+    expect(probe.calls, hasLength(1));
+    expect(container.read(_probeProvider).entries, isEmpty);
+  });
+
+  testWidgets('a retry that falls due while the app is hidden waits for it', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': down});
+    await tester.pump();
+
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump(probeConfirmDelay);
     expect(probe.calls, hasLength(1));
 
-    probe.retry('a');
-    await pumpEventQueue();
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+    expect(probe.calls, hasLength(2));
+    container.dispose();
+  });
+
+  testWidgets('a reset makes the next failure one to confirm again', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': timedOut});
+    await tester.pump();
+
+    trackerOf(container).bumpHostEpoch();
+    await tester.pump(Duration.zero);
     expect(probe.calls, hasLength(2));
     probe.answer({
-      'a': const ProbeAnswer(value: 'down', coreEpoch: 1, picksVersion: 1),
+      'a': const ProbeAnswer(value: 'down', coreEpoch: 1, routeVersion: 1),
     });
-    await pumpEventQueue();
-    final entry = container.read(_probeProvider).entryOf('a');
-    expect(entry.phase, ProbePhase.failed);
-    expect(entry.value, 'down');
+    await tester.pump();
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
 
-    trackerOf(container).markResumed();
-    await pumpEventQueue();
+    await tester.pump(probeConfirmDelay);
     expect(probe.calls, hasLength(3));
+    container.dispose();
   });
+
+  test('a proxy the user switched takes over a probe still out', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await pumpEventQueue();
+
+    trackerOf(container).markPicked();
+    await pumpEventQueue();
+    expect(probe.calls, ['a', 'a']);
+
+    probe.answer({'a': down});
+    probe.answer({'a': _ok('a.example:443')});
+    await pumpEventQueue();
+    expect(container.read(_probeProvider).entryOf('a').phase, ProbePhase.fresh);
+  });
+
+  test('a proxy the user switched asks a failure again at once', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    probe.watch('b');
+    await pumpEventQueue();
+    probe.answer({'a': timedOut});
+    probe.answer({'b': _ok('b.example:443')});
+    await pumpEventQueue();
+
+    trackerOf(container).markPicked();
+    await pumpEventQueue();
+
+    expect(probe.calls, ['a', 'b', 'a']);
+    expect(container.read(_probeProvider).isLoading('a'), isTrue);
+  });
+
+  testWidgets('a proxy the user switched lets one probe past the throttle', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..throttle = probeThrottleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    probe.moved.add('a.example:443');
+    moveRoute(container, 2);
+    await tester.pump();
+    expect(probe.calls, ['a']);
+
+    trackerOf(container).markPicked();
+    await tester.pump();
+    expect(probe.calls, ['a', 'a']);
+    probe.answer({'a': _ok('a.example:443', routeVersion: 2)});
+    await tester.pump();
+
+    moveRoute(container, 3);
+    await tester.pump();
+    expect(probe.calls, ['a', 'a']);
+    await tester.pump(probeThrottleDuration);
+    expect(probe.calls, ['a', 'a', 'a']);
+    await tester.pump(probeThrottleDuration);
+  });
+
+  testWidgets('a proxy the user switched is checked without waiting', (
+    tester,
+  ) async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier)
+      ..settle = probeSettleDuration;
+    probe.watch('a');
+    await tester.pump();
+    probe.answer({'a': _ok('a.example:443')});
+    await tester.pump();
+
+    moveRoute(container, 2);
+    await tester.pump();
+    moveRoute(container, 3);
+    await tester.pump();
+    expect(probe.checks, hasLength(1));
+
+    trackerOf(container).markPicked();
+    await tester.pump();
+    expect(probe.checks, hasLength(2));
+    await tester.pump(probeSettleDuration);
+  });
+
+  test(
+    'a failed answer is asked again on a refresh or the app resuming',
+    () async {
+      final container = build();
+      final probe = container.read(_probeProvider.notifier);
+      probe.watch('a');
+      await pumpEventQueue();
+      probe.answer({'a': timedOut});
+      await pumpEventQueue();
+      expect(
+        container.read(_probeProvider).entryOf('a').phase,
+        ProbePhase.failed,
+      );
+
+      probe.watch('a');
+      await pumpEventQueue();
+      expect(probe.calls, hasLength(1));
+
+      probe.refresh(['a']);
+      await pumpEventQueue();
+      expect(probe.calls, hasLength(2));
+      expect(container.read(_probeProvider).isLoading('a'), isTrue);
+      probe.answer({'a': down});
+      await pumpEventQueue();
+      final entry = container.read(_probeProvider).entryOf('a');
+      expect(entry.phase, ProbePhase.failed);
+      expect(entry.value, 'down');
+
+      trackerOf(container).markResumed();
+      await pumpEventQueue();
+      expect(probe.calls, hasLength(3));
+      expect(container.read(_probeProvider).isLoading('a'), isTrue);
+    },
+  );
 
   test('coming back to a failed target asks again', () async {
     final container = build();
@@ -236,9 +783,7 @@ void main() {
     probe.watch('a');
     probe.watch('b');
     await pumpEventQueue();
-    probe.answer({
-      'b': _ok(['JP-01', 'Auto']),
-    });
+    probe.answer({'b': _ok('b.example:443')});
     await pumpEventQueue();
     probe.unwatch('a');
 
@@ -256,9 +801,7 @@ void main() {
       final probe = container.read(_probeProvider.notifier);
       probe.watch('a');
       await pumpEventQueue();
-      probe.answer({
-        'a': _ok(['HK-01', 'Proxy']),
-      });
+      probe.answer({'a': _ok('a.example:443')});
       await pumpEventQueue();
 
       probe.refresh(['a', 'b']);
@@ -269,12 +812,8 @@ void main() {
       expect(entry.isLoading, isTrue);
       expect(entry.value, 'ok');
 
-      probe.answer({
-        'a': _ok(['HK-01', 'Proxy']),
-      });
-      probe.answer({
-        'b': _ok(['JP-01', 'Auto']),
-      });
+      probe.answer({'a': _ok('a.example:443')});
+      probe.answer({'b': _ok('b.example:443')});
       await pumpEventQueue();
       expect(
         container.read(_probeProvider).entryOf('b').phase,
@@ -300,9 +839,9 @@ void main() {
     expect(probe.calls, hasLength(2));
 
     probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-      'b': _ok(['HK-01']),
-      'c': _ok(['JP-02', 'Auto']),
+      'a': _ok('a.example:443'),
+      'b': _ok('a.example:443'),
+      'c': _ok('a.example:443', routeVersion: 0),
     });
     await pumpEventQueue();
     final state = container.read(_probeProvider);
@@ -324,7 +863,7 @@ void main() {
 
     trackerOf(
       container,
-    ).applySnapshot(const RouteSnapshot(coreEpoch: 1, picksVersion: 1));
+    ).applySnapshot(const RouteSnapshot(coreEpoch: 1, routeVersion: 1));
     await pumpEventQueue();
 
     expect(probe.calls, ['a']);
@@ -335,9 +874,7 @@ void main() {
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
     await pumpEventQueue();
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
 
     container.read(appVisibleProvider.notifier).value = false;
@@ -351,14 +888,32 @@ void main() {
     expect(probe.calls, hasLength(2));
   });
 
+  test('a route check that falls due while the app is hidden waits', () async {
+    final container = build();
+    final probe = container.read(_probeProvider.notifier);
+    probe.watch('a');
+    await pumpEventQueue();
+    probe.answer({'a': _ok('a.example:443')});
+    await pumpEventQueue();
+
+    container.read(appVisibleProvider.notifier).value = false;
+    moveRoute(container, 2);
+    await pumpEventQueue();
+    expect(probe.checks, isEmpty);
+
+    container.read(appVisibleProvider.notifier).value = true;
+    await pumpEventQueue();
+
+    expect(probe.checks, hasLength(1));
+    expect(container.read(_probeProvider).entryOf('a').stamp?.routeVersion, 2);
+  });
+
   test('a target left while its re-probe waits stops loading', () async {
     final container = build();
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
     await pumpEventQueue();
-    probe.answer({
-      'a': _ok(['HK-01', 'Proxy']),
-    });
+    probe.answer({'a': _ok('a.example:443')});
     await pumpEventQueue();
 
     container.read(appVisibleProvider.notifier).value = false;
@@ -375,18 +930,13 @@ void main() {
     expect(probe.calls, hasLength(1));
   });
 
-  test('a second stale answer under the same route gives up', () async {
+  test('a second stale answer under the same route is a failure', () async {
     final container = build();
     final probe = container.read(_probeProvider.notifier);
     probe.watch('a');
     await pumpEventQueue();
 
-    const stale = ProbeAnswer(
-      value: 'ok',
-      coreEpoch: 0,
-      picksVersion: 1,
-      chains: ['HK-01', 'Proxy'],
-    );
+    const stale = ProbeAnswer(value: 'ok', coreEpoch: 0, routeVersion: 1);
     probe.answer({'a': stale});
     await pumpEventQueue();
     expect(probe.calls, hasLength(2));
@@ -411,7 +961,9 @@ void main() {
 
     ProviderContainer live(RouteSnapshot Function() snapshot) {
       when(() => core.watchRoute(true)).thenAnswer((_) async => snapshot());
-      when(() => core.watchRoute(false)).thenAnswer((_) async => null);
+      when(
+        () => core.watchRoute(false),
+      ).thenAnswer((_) async => RouteSnapshot(coreEpoch: snapshot().coreEpoch));
       final container = ProviderContainer(
         overrides: [
           initProvider.overrideWithBuild((_, _) => true),
@@ -429,7 +981,7 @@ void main() {
     test('an answer newer than the state has the Core read again', () async {
       var epoch = 1;
       final container = live(
-        () => RouteSnapshot(coreEpoch: epoch, picksVersion: 1),
+        () => RouteSnapshot(coreEpoch: epoch, routeVersion: 1),
       );
       final probe = container.read(_probeProvider.notifier);
       probe.watch('a');
@@ -438,12 +990,7 @@ void main() {
 
       epoch = 2;
       probe.answer({
-        'a': const ProbeAnswer(
-          value: 'ok',
-          coreEpoch: 2,
-          picksVersion: 1,
-          chains: ['HK-01'],
-        ),
+        'a': const ProbeAnswer(value: 'ok', coreEpoch: 2, routeVersion: 1),
       });
       await pumpEventQueue();
 
@@ -452,12 +999,7 @@ void main() {
       expect(probe.calls, ['a', 'a']);
 
       probe.answer({
-        'a': const ProbeAnswer(
-          value: 'ok',
-          coreEpoch: 2,
-          picksVersion: 1,
-          chains: ['HK-01'],
-        ),
+        'a': const ProbeAnswer(value: 'ok', coreEpoch: 2, routeVersion: 1),
       });
       await pumpEventQueue();
       expect(
@@ -470,7 +1012,7 @@ void main() {
       'a probe due on return waits for the route to be read again',
       () async {
         final container = live(
-          () => const RouteSnapshot(coreEpoch: 1, picksVersion: 1),
+          () => const RouteSnapshot(coreEpoch: 1, routeVersion: 1),
         );
         final reads = <Completer<RouteSnapshot>>[];
         when(() => core.watchRoute(true)).thenAnswer((_) {
@@ -481,16 +1023,9 @@ void main() {
         final probe = container.read(_probeProvider.notifier);
         probe.watch('a');
         await pumpEventQueue();
-        reads.last.complete(const RouteSnapshot(coreEpoch: 1, picksVersion: 1));
+        reads.last.complete(const RouteSnapshot(coreEpoch: 1, routeVersion: 1));
         await pumpEventQueue();
-        probe.answer({
-          'a': const ProbeAnswer(
-            value: 'ok',
-            coreEpoch: 1,
-            picksVersion: 1,
-            chains: ['HK-01'],
-          ),
-        });
+        probe.answer({'a': _ok('a.example:443')});
         await pumpEventQueue();
 
         container.read(appVisibleProvider.notifier).value = false;
@@ -500,7 +1035,7 @@ void main() {
         await pumpEventQueue();
         expect(probe.calls, hasLength(1));
 
-        reads.last.complete(const RouteSnapshot(coreEpoch: 1, picksVersion: 2));
+        reads.last.complete(const RouteSnapshot(coreEpoch: 1, routeVersion: 2));
         await pumpEventQueue();
         expect(probe.calls, hasLength(2));
       },
@@ -510,19 +1045,12 @@ void main() {
       'a target left while the Core was away is asked again on return',
       () async {
         final container = live(
-          () => const RouteSnapshot(coreEpoch: 1, picksVersion: 1),
+          () => const RouteSnapshot(coreEpoch: 1, routeVersion: 1),
         );
         final probe = container.read(_probeProvider.notifier);
         probe.watch('a');
         await pumpEventQueue();
-        probe.answer({
-          'a': const ProbeAnswer(
-            value: 'ok',
-            coreEpoch: 1,
-            picksVersion: 1,
-            chains: ['HK-01'],
-          ),
-        });
+        probe.answer({'a': _ok('a.example:443')});
         await pumpEventQueue();
 
         container.read(coreStatusProvider.notifier).value =
@@ -543,7 +1071,7 @@ void main() {
 
     test('the last watcher releases the tracker', () async {
       final container = live(
-        () => const RouteSnapshot(coreEpoch: 1, picksVersion: 1),
+        () => const RouteSnapshot(coreEpoch: 1, routeVersion: 1),
       );
       final probe = container.read(_probeProvider.notifier);
       probe.watch('a');

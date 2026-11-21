@@ -22,7 +22,7 @@ void main() {
       expect(value.onlyStatisticsProxy, false);
       expect(value.autoLaunch, false);
       expect(value.closeConnections, true);
-      expect(value.tabAnimation, TabAnimation.slide);
+      expect(value.tabAnimation, TabAnimation.fade);
     });
 
     test('can update state', () {
@@ -167,7 +167,7 @@ void main() {
   group('ProxiesStyleSetting provider', () {
     test('default values', () {
       final value = container.read(proxiesStyleSettingProvider);
-      expect(value.type, ProxiesType.tab);
+      expect(value.type, ProxiesType.list);
     });
 
     test('can update state', () {
@@ -209,6 +209,21 @@ void main() {
       expect(config.currentProfileId, 99);
       expect(config.patchClashConfig.mixedPort, 7890);
       expect(config.excludeSSIDs, ['Office Wi-Fi']);
+    });
+  });
+
+  group('PatchClashConfig provider', () {
+    test('keeps its mixed port over a 0 and takes the rest', () {
+      final notifier = container.read(patchClashConfigProvider.notifier);
+      notifier.update((state) => state.copyWith(mixedPort: 7899));
+
+      notifier.update((state) => state.copyWith(mixedPort: 0, allowLan: true));
+      notifier.value = notifier.value.copyWith(mixedPort: 0, ipv6: true);
+
+      final config = container.read(patchClashConfigProvider);
+      expect(config.mixedPort, 7899);
+      expect(config.allowLan, isTrue);
+      expect(config.ipv6, isTrue);
     });
   });
 

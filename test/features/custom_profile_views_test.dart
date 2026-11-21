@@ -6,8 +6,6 @@ import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
-import 'package:fl_clash/icons/icons.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart' hide FileInfo;
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/action.dart';
@@ -17,12 +15,13 @@ import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/profiles/custom/custom_proxies.dart';
 import 'package:fl_clash/views/profiles/custom/dialers.dart';
 import 'package:fl_clash/views/profiles/custom/groups.dart';
 import 'package:fl_clash/views/profiles/custom/rules.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +30,11 @@ import 'package:mocktail/mocktail.dart';
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+
+final _back = find.ancestor(
+  of: find.byTooltip('Back'),
+  matching: find.byType(IconButton),
+);
 
 class _TestProfileRules extends ProfileRules {
   final List<Rule> initial;
@@ -125,11 +129,11 @@ final _testCustomDataProvider =
     NotifierProvider<_TestCustomData, CustomProfileData>(_TestCustomData.new);
 
 Future<void> _dismissSaveBlocked(WidgetTester tester, String reason) async {
-  final dialog = find.byType(CommonDialog);
+  final dialog = find.byType(AlertDialog);
   expect(
     find.descendant(
       of: dialog,
-      matching: find.text(AppLocalizations.current.cannotSave),
+      matching: find.text(currentAppLocalizations.cannotSave),
     ),
     findsOneWidget,
   );
@@ -137,7 +141,7 @@ Future<void> _dismissSaveBlocked(WidgetTester tester, String reason) async {
     find.descendant(of: dialog, matching: find.textContaining(reason)),
     findsOneWidget,
   );
-  await tester.tap(find.text(AppLocalizations.current.confirm));
+  await tester.tap(find.text(currentAppLocalizations.confirm));
   await tester.pumpAndSettle();
 }
 
@@ -155,12 +159,10 @@ Future<void> _expectClosesWithoutIssues(WidgetTester tester) async {
   expect(form, findsNothing);
 }
 
-Finder _menuItem(String label) => find.descendant(
-  of: find.byType(CommonPopupMenu),
-  matching: find.text(label),
-);
+Finder _menuItem(String label) =>
+    find.descendant(of: find.byType(PopupMenu), matching: find.text(label));
 
-Widget _proxyGroupsPage(int profileId) => CommonScaffold(
+Widget _proxyGroupsPage(int profileId) => Scaffold(
   title: 'Groups',
   body: CustomScrollView(slivers: [CustomProxyGroupsSection(profileId)]),
 );
@@ -237,9 +239,7 @@ Future<_TestProxyGroups> _pumpProxyGroups(
       tester
           .state<NavigatorState>(find.byType(Navigator).first)
           .push(
-            MaterialPageRoute<void>(
-              builder: (_) => _proxyGroupsPage(profile.id),
-            ),
+            HostPageRoute<void>(builder: (_) => _proxyGroupsPage(profile.id)),
           ),
     );
     await tester.pumpAndSettle();
@@ -287,7 +287,7 @@ Future<_TestProfileRules> _pumpRules(WidgetTester tester) async {
 
 void main() {
   group('rules list menu', () {
-    final menu = find.byType(CommonPopupMenu);
+    final menu = find.byType(PopupMenu);
     Finder menuItem(String label) =>
         find.descendant(of: menu, matching: find.text(label));
 
@@ -300,7 +300,7 @@ void main() {
         kind: PointerDeviceKind.mouse,
       );
       await tester.pumpAndSettle();
-      await tester.tap(menuItem(AppLocalizations.current.copy));
+      await tester.tap(menuItem(currentAppLocalizations.copy));
       await tester.pumpAndSettle();
 
       expect(notifier.value.map((rule) => rule.content), [
@@ -326,9 +326,9 @@ void main() {
         kind: PointerDeviceKind.mouse,
       );
       await tester.pumpAndSettle();
-      await tester.tap(menuItem(AppLocalizations.current.delete));
+      await tester.tap(menuItem(currentAppLocalizations.delete));
       await tester.pumpAndSettle();
-      await tester.tap(find.text(AppLocalizations.current.confirm));
+      await tester.tap(find.text(currentAppLocalizations.delete));
       await tester.pumpAndSettle();
 
       expect(notifier.value.map((rule) => rule.id), [1, 3]);
@@ -355,7 +355,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(menuItem(AppLocalizations.current.copy), findsOneWidget);
+      expect(menuItem(currentAppLocalizations.copy), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
     });
@@ -366,10 +366,10 @@ void main() {
   ) async {
     await _pumpRules(tester);
 
-    await tester.tap(find.byType(CommonCheckBox).at(0));
+    await tester.tap(find.byType(Checkbox).at(0));
     await tester.pump();
 
-    expect(find.byTooltip(AppLocalizations.current.copy), findsNothing);
+    expect(find.byTooltip(currentAppLocalizations.copy), findsNothing);
     expect(
       find.descendant(
         of: find.byType(TonalButtonGroup),
@@ -388,9 +388,7 @@ void main() {
 
     final rows = find.byType(DecorationListItem);
     expect(rows, findsNWidgets(3));
-    final color = Theme.of(
-      tester.element(rows.first),
-    ).colorScheme.outlineVariant;
+    final color = Divider.colorOf(tester.element(rows.first));
     final separator = paints
       ..something(
         (method, arguments) =>
@@ -406,13 +404,13 @@ void main() {
   testWidgets('groups list deletes the checked groups', (tester) async {
     final notifier = await _pumpProxyGroups(tester);
 
-    await tester.tap(find.byType(CommonCheckBox).at(0));
+    await tester.tap(find.byType(Checkbox).at(0));
     await tester.pump();
     await tester.tap(find.text('Group 2'));
     await tester.pump();
-    await tester.tap(find.byTooltip(AppLocalizations.current.delete));
+    await tester.tap(find.byTooltip(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
-    await tester.tap(find.text(AppLocalizations.current.confirm));
+    await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
 
     expect(notifier.deleted.single, {100, 102});
@@ -421,7 +419,7 @@ void main() {
   });
 
   group('groups list menu', () {
-    final menu = find.byType(CommonPopupMenu);
+    final menu = find.byType(PopupMenu);
     Finder menuItem(String label) =>
         find.descendant(of: menu, matching: find.text(label));
 
@@ -440,8 +438,8 @@ void main() {
       final notifier = await _pumpProxyGroups(tester);
 
       await rightClick(tester, 'Group 0');
-      expect(menuItem(AppLocalizations.current.delete), findsOneWidget);
-      await tester.tap(menuItem(AppLocalizations.current.copy));
+      expect(menuItem(currentAppLocalizations.delete), findsOneWidget);
+      await tester.tap(menuItem(currentAppLocalizations.copy));
       await tester.pumpAndSettle();
 
       expect(menu, findsNothing);
@@ -452,7 +450,7 @@ void main() {
       expect(find.text('Group 0-01'), findsOneWidget);
 
       await rightClick(tester, 'Group 0-01');
-      await tester.tap(menuItem(AppLocalizations.current.copy));
+      await tester.tap(menuItem(currentAppLocalizations.copy));
       await tester.pumpAndSettle();
 
       expect(notifier.value.map((group) => group.name), [
@@ -474,7 +472,7 @@ void main() {
       await tester.longPress(find.text('Group 0'));
       await tester.pumpAndSettle();
 
-      expect(menuItem(AppLocalizations.current.copy), findsOneWidget);
+      expect(menuItem(currentAppLocalizations.copy), findsOneWidget);
       expect(notifier.orders, isEmpty);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -491,13 +489,13 @@ void main() {
         kind: PointerDeviceKind.mouse,
       );
       await tester.pumpAndSettle();
-      await tester.tap(menuItem(AppLocalizations.current.delete));
+      await tester.tap(menuItem(currentAppLocalizations.delete));
       await tester.pumpAndSettle();
       expect(
-        find.text(AppLocalizations.current.confirmDeleteProxyGroup),
+        find.text(currentAppLocalizations.confirmDeleteProxyGroup),
         findsOneWidget,
       );
-      await tester.tap(find.text(AppLocalizations.current.confirm));
+      await tester.tap(find.text(currentAppLocalizations.delete));
       await tester.pumpAndSettle();
 
       expect(notifier.deleted.single, {101});
@@ -516,13 +514,45 @@ void main() {
         kind: PointerDeviceKind.mouse,
       );
       await tester.pumpAndSettle();
-      await tester.tap(menuItem(AppLocalizations.current.delete));
+      await tester.tap(menuItem(currentAppLocalizations.delete));
       await tester.pumpAndSettle();
       expect(
-        find.text(AppLocalizations.current.proxyGroupInUse('Group 1')),
+        find.text(currentAppLocalizations.proxyGroupInUse('Group 1')),
         findsOneWidget,
       );
-      await tester.tap(find.text(AppLocalizations.current.confirm));
+      await tester.tap(find.text(currentAppLocalizations.delete));
+      await tester.pumpAndSettle();
+
+      expect(notifier.deleted.single, {101});
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('the edit page warns when the profile still names the group', (
+      tester,
+    ) async {
+      final notifier = await _pumpProxyGroups(tester, inUse: {'Group 1'});
+
+      await tester.tap(find.text('Group 1'));
+      await tester.pumpAndSettle();
+      final delete = find.descendant(
+        of: find.byType(EditProxyGroupView),
+        matching: find.text(currentAppLocalizations.delete),
+      );
+      await tester.ensureVisible(delete);
+      await tester.pumpAndSettle();
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(currentAppLocalizations.proxyGroupInUse('Group 1')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text(currentAppLocalizations.delete),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(notifier.deleted.single, {101});
@@ -547,12 +577,12 @@ void main() {
 
       await tester.tap(find.byGlyph(AppGlyphs.sort));
       await tester.pumpAndSettle();
-      expect(find.byType(CommonCheckBox).hitTestable(), findsNothing);
+      expect(find.byType(Checkbox).hitTestable(), findsNothing);
 
       final gesture = await tester.startGesture(
         tester.getCenter(find.byType(SortHandle).first),
       );
-      await tester.pump(kPressTimeout);
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
       await gesture.moveBy(const Offset(0, 20));
       await tester.pump();
       await gesture.moveBy(Offset(0, rowHeight.height * 2));
@@ -570,16 +600,16 @@ void main() {
       tester,
     ) async {
       await _pumpProxyGroups(tester, pushed: true);
-      final l10n = AppLocalizations.current;
+      final l10n = currentAppLocalizations;
 
       await tester.tap(find.byTooltip(l10n.sort));
       await tester.pumpAndSettle();
-      expect(find.byType(CommonCheckBox).hitTestable(), findsNothing);
-      expect(find.byType(BackButton).hitTestable(), findsOneWidget);
+      expect(find.byType(Checkbox).hitTestable(), findsNothing);
+      expect(_back.hitTestable(), findsOneWidget);
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byType(CommonCheckBox).hitTestable(), findsNWidgets(3));
+      expect(find.byType(Checkbox).hitTestable(), findsNWidgets(3));
 
       await tester.tap(find.byTooltip(l10n.sort));
       await tester.pumpAndSettle();
@@ -593,7 +623,7 @@ void main() {
     testWidgets('stays closed while groups are being checked', (tester) async {
       await _pumpProxyGroups(tester);
 
-      await tester.tap(find.byType(CommonCheckBox).at(0));
+      await tester.tap(find.byType(Checkbox).at(0));
       await tester.pump();
       await rightClick(tester, 'Group 1');
 
@@ -608,13 +638,17 @@ void main() {
   ) async {
     await _pumpProxyGroups(tester);
     tester.view.physicalSize = const Size(1400, 2600);
-    final l10n = AppLocalizations.current;
+    final l10n = currentAppLocalizations;
     Finder row(String title) =>
         find.ancestor(of: find.text(title), matching: find.byType(FormRow));
     Finder valueIn(String title, String value) =>
         find.descendant(of: row(title), matching: find.text(value));
     Future<void> tapRow(String title) async {
-      await tester.ensureVisible(row(title));
+      await Scrollable.ensureVisible(
+        tester.element(row(title)),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(row(title));
       await tester.pumpAndSettle();
     }
@@ -686,7 +720,7 @@ void main() {
   ) async {
     await _pumpProxyGroups(tester);
     tester.view.physicalSize = const Size(1400, 2600);
-    final l10n = AppLocalizations.current;
+    final l10n = currentAppLocalizations;
     Finder row(String title) =>
         find.ancestor(of: find.text(title), matching: find.byType(FormRow));
     final addOption = find.widgetWithText(FormRow, l10n.addSettingEntry);
@@ -725,7 +759,9 @@ void main() {
     for (final title in loadBalanceOptions) {
       await add(title);
     }
-    await tester.tap(find.byTooltip(currentAppLocalizations.save));
+    await tester.tap(
+      find.widgetWithText(TextButton, currentAppLocalizations.save),
+    );
     await _expectClosesWithoutIssues(tester);
     await tester.pumpAndSettle();
 
@@ -755,7 +791,7 @@ void main() {
       'reopening', (tester) async {
     await _pumpProxyGroups(tester);
     tester.view.physicalSize = const Size(1400, 2600);
-    final l10n = AppLocalizations.current;
+    final l10n = currentAppLocalizations;
     final titles = [l10n.testUrl, l10n.timeout, l10n.expectedStatus];
     Finder row(String title) =>
         find.ancestor(of: find.text(title), matching: find.byType(FormRow));
@@ -784,7 +820,9 @@ void main() {
       await tester.enterText(fieldIn(title), '');
     }
     await tester.pump();
-    await tester.tap(find.byTooltip(currentAppLocalizations.save));
+    await tester.tap(
+      find.widgetWithText(TextButton, currentAppLocalizations.save),
+    );
     await _expectClosesWithoutIssues(tester);
     await tester.pumpAndSettle();
 
@@ -843,7 +881,9 @@ void main() {
           (state) => state.copyWith(name: 'Mine', proxies: const ['DIRECT']),
         );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip(currentAppLocalizations.save));
+    await tester.tap(
+      find.widgetWithText(TextButton, currentAppLocalizations.save),
+    );
     await _expectClosesWithoutIssues(tester);
 
     expect(proxyGroups.value.map((group) => group.name), ['Mine']);
@@ -913,7 +953,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip(currentAppLocalizations.save));
+      await tester.tap(
+        find.widgetWithText(TextButton, currentAppLocalizations.save),
+      );
       await tester.pumpAndSettle();
 
       expect(proxyGroups.value, isEmpty);
@@ -926,7 +968,7 @@ void main() {
       tester,
     ) async {
       final form = await openNewGroup(tester);
-      final checked = Completer<List<String>>();
+      final checked = Completer<Map<int, String>>();
       when(() => core.validateFilters(any())).thenAnswer((_) => checked.future);
       form.update(
         (state) => state.copyWith(
@@ -936,11 +978,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip(currentAppLocalizations.save));
+      await tester.tap(
+        find.widgetWithText(TextButton, currentAppLocalizations.save),
+      );
       await tester.pump();
       form.update((state) => state.copyWith(name: 'Later'));
-      when(() => core.validateFilters(any())).thenAnswer((_) async => ['', '']);
-      checked.complete(['', '']);
+      when(() => core.validateFilters(any())).thenAnswer((_) async => const {});
+      checked.complete(const {});
       await _expectClosesWithoutIssues(tester);
 
       expect(proxyGroups.value.map((group) => group.name), ['Later']);
@@ -968,7 +1012,7 @@ void main() {
     ];
     final core = _MockCore();
     registerFallbackValue(<String>[]);
-    when(() => core.validateFilters(any())).thenAnswer((_) async => ['', '']);
+    when(() => core.validateFilters(any())).thenAnswer((_) async => const {});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1219,7 +1263,7 @@ void main() {
     expect(find.text('vless'), findsOneWidget);
     expect(find.text('hk.example.com:8388'), findsNothing);
     expect(find.byType(MetaChip), findsNothing);
-    expect(find.byType(SliverReorderableList), findsOneWidget);
+    expect(find.byType(SliverPrismReorderableList), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -1238,7 +1282,7 @@ void main() {
     tester,
   ) async {
     _setViewport(tester);
-    final validated = Completer<List<String>>();
+    final validated = Completer<Map<int, String>>();
     final proxies = _RecordingCustomProxies();
     final core = _MockCore();
     registerFallbackValue(<Map<String, dynamic>>[]);
@@ -1278,7 +1322,7 @@ void main() {
     await tester.tap(find.byTooltip('Save'));
     await tester.pump();
 
-    validated.complete(['']);
+    validated.complete(const {});
     await tester.pumpAndSettle();
 
     expect(proxies.saved.map((proxy) => proxy.name), ['Mine']);
@@ -1294,11 +1338,11 @@ void main() {
     registerFallbackValue(<Map<String, dynamic>>[]);
     when(() => core.validateProxies(any())).thenAnswer((invocation) async {
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      return [
-        for (final definition
-            in invocation.positionalArguments.single as List<Object?>)
-          (definition! as Map)['server'] == null ? 'missing server' : '',
-      ];
+      return {
+        for (final (index, definition)
+            in (invocation.positionalArguments.single as List<Object?>).indexed)
+          if ((definition! as Map)['server'] == null) index: 'missing server',
+      };
     });
     final container = ProviderContainer(
       overrides: [
@@ -1349,7 +1393,7 @@ void main() {
     registerFallbackValue(<Map<String, dynamic>>[]);
     when(
       () => core.validateProxies(any()),
-    ).thenAnswer((_) async => ['missing server']);
+    ).thenAnswer((_) async => const {0: 'missing server'});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1465,7 +1509,7 @@ void main() {
     ]);
     final core = _MockCore();
     registerFallbackValue(<Map<String, dynamic>>[]);
-    when(() => core.validateProxies(any())).thenAnswer((_) async => ['']);
+    when(() => core.validateProxies(any())).thenAnswer((_) async => const {});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1494,7 +1538,7 @@ void main() {
       ),
     );
     await tester.pump();
-    final l10n = AppLocalizations.current;
+    final l10n = currentAppLocalizations;
     await tester.tap(find.text('Mesh'));
     await tester.pumpAndSettle();
 
@@ -1513,6 +1557,13 @@ void main() {
       find.descendant(
         of: find.byType(ListEditorPage<String, String>),
         matching: find.byTooltip(l10n.add),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PopupMenu),
+        matching: find.text(l10n.add),
       ),
     );
     await tester.pumpAndSettle();
@@ -1552,6 +1603,202 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('an http proxy edits the headers it sends', (tester) async {
+    _setViewport(tester);
+    final proxies = _RecordingCustomProxies(const [
+      CustomProxy(
+        id: 1,
+        definition: {
+          'name': 'Example HTTP',
+          'type': 'http',
+          'server': 'proxy.example.com',
+          'port': 443,
+          'headers': {'Host': 'origin.example.com:443'},
+        },
+      ),
+    ]);
+    final core = _MockCore();
+    registerFallbackValue(<Map<String, dynamic>>[]);
+    when(() => core.validateProxies(any())).thenAnswer((_) async => const {});
+    final container = ProviderContainer(
+      overrides: [
+        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        customGroupNamesProvider.overrideWith(
+          (_) => Stream.value(const <String>{}),
+        ),
+        customProxiesProvider.overrideWith(() => proxies),
+        clashProvidersActionProvider.overrideWith(
+          _RecordingClashProvidersAction.new,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+    container
+        .read(viewSizeProvider.notifier)
+        .update((_) => const Size(500, 1000));
+    Finder row(String title) => find.widgetWithText(FormRow, title);
+    Finder fieldIn(String title) =>
+        find.descendant(of: row(title), matching: find.byType(TextFormField));
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(child: CustomProxiesView()),
+      ),
+    );
+    await tester.pump();
+    final l10n = currentAppLocalizations;
+    await tester.tap(find.text('Example HTTP'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      row(l10n.requestHeaders),
+      200,
+      scrollable: find
+          .ancestor(of: row(l10n.port), matching: find.byType(Scrollable))
+          .first,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(row(l10n.requestHeaders)),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: row(l10n.requestHeaders),
+        matching: find.text(l10n.itemsCount(1)),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(row(l10n.requestHeaders));
+    await tester.pumpAndSettle();
+    expect(find.text('origin.example.com:443'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ListEditorPage<MapEntry<String, String>, String>),
+        matching: find.byTooltip(l10n.add),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PopupMenu),
+        matching: find.text(l10n.add),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(fieldIn(l10n.key), 'X-Auth-Token');
+    await tester.enterText(fieldIn(l10n.value), 'example-token');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(find.text('example-token'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: row(l10n.requestHeaders),
+        matching: find.text(l10n.itemsCount(2)),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip(l10n.save));
+    await tester.pumpAndSettle();
+
+    expect(proxies.saved.single.definition['headers'], {
+      'Host': 'origin.example.com:443',
+      'X-Auth-Token': 'example-token',
+    });
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('switching HTTPUpgrade on offers its fast open', (tester) async {
+    _setViewport(tester);
+    final proxies = _RecordingCustomProxies(const [
+      CustomProxy(
+        id: 1,
+        definition: {
+          'name': 'Upgrade',
+          'type': 'vless',
+          'server': 'upgrade.example.com',
+          'port': 443,
+          'uuid': '00000000-0000-0000-0000-000000000000',
+          'network': 'ws',
+          'ws-opts': {'path': '/', 'v2ray-http-upgrade': false},
+        },
+      ),
+    ]);
+    final core = _MockCore();
+    registerFallbackValue(<Map<String, dynamic>>[]);
+    when(() => core.validateProxies(any())).thenAnswer((_) async => const {});
+    final container = ProviderContainer(
+      overrides: [
+        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        customGroupNamesProvider.overrideWith(
+          (_) => Stream.value(const <String>{}),
+        ),
+        customProxiesProvider.overrideWith(() => proxies),
+        clashProvidersActionProvider.overrideWith(
+          _RecordingClashProvidersAction.new,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+    container
+        .read(viewSizeProvider.notifier)
+        .update((_) => const Size(500, 1000));
+    Finder row(String title) => find.widgetWithText(FormRow, title);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(child: CustomProxiesView()),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Upgrade'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      row('HTTPUpgrade'),
+      200,
+      scrollable: find
+          .ancestor(
+            of: row('WebSocket Path'),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(row('HTTPUpgrade')),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
+
+    expect(row('HTTPUpgrade Fast Open'), findsNothing);
+
+    await tester.tap(
+      find.descendant(of: row('HTTPUpgrade'), matching: find.byType(Switch)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(row('HTTPUpgrade Fast Open'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(of: row('HTTPUpgrade'), matching: find.byType(Switch)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(row('HTTPUpgrade Fast Open'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('an app-level proxy saves outside a profile and reapplies on '
       'leaving', (tester) async {
     _setViewport(tester);
@@ -1559,7 +1806,7 @@ void main() {
     final action = _RecordingClashProvidersAction();
     final core = _MockCore();
     registerFallbackValue(<Map<String, dynamic>>[]);
-    when(() => core.validateProxies(any())).thenAnswer((_) async => ['']);
+    when(() => core.validateProxies(any())).thenAnswer((_) async => const {});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1608,7 +1855,7 @@ void main() {
     final action = _RecordingClashProvidersAction();
     final core = _MockCore();
     registerFallbackValue(<Map<String, dynamic>>[]);
-    when(() => core.validateProxies(any())).thenAnswer((_) async => ['']);
+    when(() => core.validateProxies(any())).thenAnswer((_) async => const {});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1771,7 +2018,7 @@ void main() {
         child: TestApp(
           child: Navigator(
             key: pageNavigator,
-            pages: [MaterialPage(child: _proxyGroupsPage(profile.id))],
+            pages: [RootPage(child: _proxyGroupsPage(profile.id))],
             onDidRemovePage: (_) {},
           ),
         ),

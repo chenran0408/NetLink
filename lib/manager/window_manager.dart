@@ -4,13 +4,14 @@ import 'dart:io';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/enum/enum.dart';
-import 'package:fl_clash/icons/icons.dart';
 import 'package:fl_clash/models/config.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window/window.dart';
+import 'package:rust_api/window.dart';
 
 const _windowGeometryDelay = Duration(milliseconds: 120);
 
@@ -69,9 +70,9 @@ class _WindowContainerState extends ConsumerState<WindowManager>
       return;
     }
     final revision = ++_windowBlurRevision;
-    bool active;
+    double? opacity;
     try {
-      active = await port.setBlur(
+      opacity = await port.setBlur(
         enabled: request.enabled,
         brightness: request.brightness,
         tint: request.tint,
@@ -81,12 +82,11 @@ class _WindowContainerState extends ConsumerState<WindowManager>
         'Window blur failed: ${compactError(error)}',
         logLevel: LogLevel.warning,
       );
-      active = false;
     }
     if (!mounted || revision != _windowBlurRevision) {
       return;
     }
-    ref.read(windowBlurProvider.notifier).value = active;
+    ref.read(windowBlurProvider.notifier).value = opacity;
   }
 
   @override
@@ -398,13 +398,15 @@ class _WindowHeaderState extends ConsumerState<WindowHeader> {
 
   @override
   Widget build(BuildContext context) {
-    final translucent =
-        ref.watch(windowBlurProvider) && !ref.watch(isMobileViewProvider);
+    final backdropOpacity = ref.watch(isMobileViewProvider)
+        ? null
+        : ref.watch(windowBlurProvider);
     return WindowHeaderBar(
       height: kHeaderHeight,
-      translucent: translucent,
+      backdropOpacity: backdropOpacity,
       onDragStart: desktopWindow.startDragging,
-      onDoubleTap: caption.toggleMaximized,
+      // rust_api answers title-bar double clicks on macOS by the system setting.
+      onDoubleTap: system.isMacOS ? null : caption.toggleMaximized,
       title: system.isMacOS ? const Text(appName) : null,
       actions: system.isMacOS
           ? null
@@ -426,27 +428,26 @@ class WindowHeaderBar extends StatelessWidget {
     super.key,
     required this.height,
     required this.onDragStart,
-    required this.onDoubleTap,
-    this.translucent = false,
+    this.onDoubleTap,
+    this.backdropOpacity,
     this.title,
     this.actions,
   });
 
   final double height;
   final VoidCallback onDragStart;
-  final VoidCallback onDoubleTap;
-  final bool translucent;
+  final VoidCallback? onDoubleTap;
+  final double? backdropOpacity;
   final Widget? title;
   final Widget? actions;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    return Material(
-      color: translucent ? Colors.transparent : null,
-      shape: translucent
-          ? null
-          : Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+    final backdropOpacity = this.backdropOpacity;
+    return Surface(
+      color: backdropOpacity != null ? Colors.transparent : colorScheme.surface,
+      shape: Border(bottom: Divider.createBorderSide(context)),
       child: SizedBox(
         height: height,
         child: Stack(
@@ -459,11 +460,11 @@ class WindowHeaderBar extends StatelessWidget {
                 },
                 onDoubleTap: onDoubleTap,
                 child: ColoredBox(
-                  color: translucent
-                      ? colorScheme.surfaceContainer.withValues(
-                          alpha: kSidebarBlurOpacity,
+                  color: backdropOpacity != null
+                      ? colorScheme.chromeSurface.withValues(
+                          alpha: backdropOpacity,
                         )
-                      : colorScheme.surfaceContainerHighest,
+                      : colorScheme.chromeSurface,
                 ),
               ),
             ),
@@ -476,21 +477,27 @@ class WindowHeaderBar extends StatelessWidget {
                 top: 0,
                 bottom: 0,
                 right: 0,
-                child: IconButtonTheme(
-                  data: IconButtonThemeData(
-                    style: ButtonStyle(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      minimumSize: WidgetStatePropertyAll(
-                        getCaptionButtonSize(height),
-                      ),
-                      maximumSize: WidgetStatePropertyAll(
-                        getCaptionButtonSize(height),
-                      ),
-                      padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-                      shape: const WidgetStatePropertyAll(AppShape.none),
+                child: ButtonTheme(
+                  // Caption buttons answer a pointer as the system's do.
+                  data: ButtonThemeData(
+                    icon: ButtonStyle(
+                      tapTargetSize: TapTargetSize.shrinkWrap,
+                      minimumSize: getCaptionButtonSize(height),
+                      maximumSize: getCaptionButtonSize(height),
+                      padding: EdgeInsets.zero,
+                      shape: AppShape.none,
                       foregroundColor: WidgetStatePropertyAll(
-                        context.colorScheme.onSurface,
+                        colorScheme.onSurface,
                       ),
+                      overlayColor: WidgetStateProperty.fromMap({
+                        WidgetState.pressed:
+                            colorScheme.onSurfaceVariant.opacity10,
+                        WidgetState.hovered: colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.08),
+                        WidgetState.focused:
+                            colorScheme.onSurfaceVariant.opacity10,
+                      }),
+                      pressLook: PressLook.none,
                     ),
                   ),
                   child: actions!,
@@ -546,10 +553,10 @@ class WindowHeaderActions extends StatelessWidget {
                     ? appLocalizations.unpinWindow
                     : appLocalizations.pinWindow,
                 style: const ButtonStyle(
-                  shape: WidgetStatePropertyAll(CircleBorder()),
-                  minimumSize: WidgetStatePropertyAll(Size.zero),
-                  maximumSize: WidgetStatePropertyAll(Size.infinite),
-                  iconSize: WidgetStatePropertyAll(pinIconSize),
+                  shape: AppShape.circle,
+                  minimumSize: Size.zero,
+                  maximumSize: Size.infinite,
+                  iconSize: pinIconSize,
                 ),
                 onPressed: onPin,
                 icon: AnimatedGlyph(

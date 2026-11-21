@@ -7,12 +7,11 @@ import 'package:collection/collection.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 
 const appName = 'NetLink';
 const appHelperService = 'FlClashHelperService';
 const coreManifestName = 'manifest.json';
-const coreName = 'clash.meta';
 const browserUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const packageName = 'io.github.chenran0408.netlink';
@@ -23,30 +22,20 @@ const helperPortKey =
     'SYSTEM\\CurrentControlSet\\Services\\$appHelperService\\Runtime';
 const helperPortValue = 'Port';
 const helperSocketPath = '/run/flclash/helper.sock';
+const helperUnitPath = '/etc/systemd/system/flclash-helper.service';
 const helperProtocolVersionHeader = 'x-flclash-helper-protocol';
 final helperProtocolVersion = Platform.isWindows ? '8' : '6';
 const maxTextScale = 1.4;
 const minTextScale = 0.8;
-final baseInfoEdgeInsets = EdgeInsets.symmetric(
-  vertical: 16.mAp,
-  horizontal: 16.mAp,
-);
-final listHeaderPadding = EdgeInsets.only(
-  left: 16.mAp,
-  right: 16.mAp,
-  top: 24.mAp,
-  bottom: 8.mAp,
-);
-
-const listRowMinHeight = 56.0;
-const listRowVerticalPadding = 10.0;
-const pageToolbarHeight = 64.0;
-const sheetToolbarHeight = 48.0;
-const sheetAppBarHeight = 68.0;
 
 const watchExecution = false;
 
 const safeModeBuild = bool.fromEnvironment('SAFE_MODE');
+
+/// Gates what only the Concord core of the rs line can serve, such as MITM.
+/// The rs line strips each check with `tool/strip_rs_feature.dart` instead of
+/// turning it on, so a check must take a form that tool reads.
+const rsFeature = false;
 
 const disclaimerVersion = 1;
 
@@ -65,16 +54,36 @@ double systemTextScaleOf(BuildContext context) {
   return WidgetsBinding.instance.platformDispatcher.textScaleFactor;
 }
 
-/// How long the Core may spend on one delay test. It spends this twice in the
-/// worst case - once queueing for a slot, once on the probe itself - so the
-/// guard below has to outlast twice this value.
-const delayTestTimeoutDuration = Duration(seconds: 8);
+/// How long, in milliseconds, the Core may spend on one manual delay test. It
+/// spends this twice in the worst case - once queueing for a slot, once on the
+/// probe itself - so the guard below has to outlast twice the longest option.
+const delayTestTimeoutOptions = [500, 1000, 2000, 5000, 8000];
+
+const defaultDelayTestTimeout = 8000;
 
 const delayTestGuardDuration = Duration(seconds: 30);
 
 const delayTimedOutValue = -1;
 
 const probeTimeoutDuration = Duration(seconds: 10);
+
+/// The window a checked move opens, whose later moves are checked together
+/// when it ends. Outlasts the Core's one-second pick poll (`routePollInterval`
+/// in core/route.go), so groups re-picking on neighbouring polls cost one
+/// route check more.
+const probeSettleDuration = Duration(milliseconds: 1500);
+
+/// Spans a config load, whose providers, rule sets and url-test picks land
+/// over a few seconds, so an exit moving with each costs one probe more.
+const probeThrottleDuration = Duration(seconds: 5);
+
+/// Covers a burst of resets: a network switch reports more than once, and a
+/// launch applies the config and starts the listeners back to back.
+const probeMoveSettleDuration = Duration(milliseconds: 300);
+
+/// How long after a failure that came back early a watched probe target is
+/// asked the once more that confirms it.
+const probeConfirmDelay = Duration(seconds: 1);
 
 const downloadTimeoutDuration = Duration(seconds: 20);
 
@@ -87,8 +96,6 @@ const outboundIpTimeoutDuration = Duration(seconds: 6);
 Duration coreGuardFor(int timeout, {int budgetFactor = 2}) =>
     Duration(milliseconds: timeout * budgetFactor) + const Duration(seconds: 5);
 
-Duration probeGuardDuration(ProbeParams params) => coreGuardFor(params.timeout);
-
 /// Kept in step with serviceSweepBudgetFactor in core/service_check.go.
 const serviceSweepBudgetFactor = 6;
 
@@ -99,9 +106,6 @@ const coreConnectionWaitDuration = Duration(seconds: 10);
 const maxConcurrentDelayTests = 32;
 const maxConcurrentImports = 4;
 const maxConcurrentIconLoads = 8;
-const animateDuration = Duration(milliseconds: 100);
-const midDuration = Duration(milliseconds: 200);
-const commonDuration = Duration(milliseconds: 300);
 
 const renderThrottleDuration = Duration(milliseconds: 300);
 const defaultUpdateDuration = Duration(days: 1);
@@ -110,9 +114,6 @@ const ASN = 'ASN.mmdb';
 const GEOIP = 'GEOIP.dat';
 const GEOSITE = 'GEOSITE.dat';
 
-/// The macOS sidebar material is the finished look; the Windows accent
-/// effects need a tint over them to keep the rail readable.
-final double kSidebarBlurOpacity = system.isMacOS ? 0 : 0.5;
 final double kHeaderHeight = getWindowHeaderHeight(
   isDesktop: system.isDesktop,
   isMacOS: system.isMacOS,
@@ -122,13 +123,17 @@ const providersDirectoryName = 'providers';
 const proxiesProviderDirectoryName = 'proxies';
 const rulesProviderDirectoryName = 'rules';
 
+/// The Core reads the CA here, and map-local files only from [mitmResourcesDirectoryName].
+const mitmDirectoryName = 'mitm';
+const mitmModulesDirectoryName = 'modules';
+const mitmResourcesDirectoryName = 'resources';
+
 const localhost = '127.0.0.1';
 const clashConfigKey = 'clash_config';
 const configKey = 'config';
 const systemDnsRecordKey = 'system_dns_record';
 const bootRecordKey = 'boot_record';
-const defaultSystemDnsFallback = '223.5.5.5';
-const double dialogCommonWidth = 300;
+const appliedConfigMd5Key = 'applied_config_md5';
 const repository = 'chenran0408/NetLink';
 const maxMobileWidth = 600;
 const maxLaptopWidth = 840;
@@ -157,6 +162,7 @@ const stringListEquality = ListEquality<String>();
 const intListEquality = ListEquality<int>();
 const ruleListEquality = ListEquality<Rule>();
 const scriptListEquality = ListEquality<Script>();
+const mitmModuleListEquality = ListEquality<MitmModule>();
 const profileListEquality = ListEquality<Profile>();
 const proxyGroupsEquality = ListEquality<ProxyGroup>();
 const customProxiesEquality = ListEquality<CustomProxy>();
@@ -171,7 +177,7 @@ const proxiesListStoreKey = PageStorageKey<String>('proxies_list');
 const toolsStoreKey = PageStorageKey<String>('tools');
 const profilesStoreKey = PageStorageKey<String>('profiles');
 
-const defaultPrimaryColor = 0XFFD8C0C3;
+const defaultPrimaryColor = 0xFF007AFF;
 
 const maxLogsLength = 5000;
 const maxRequestsLength = 2000;
@@ -182,14 +188,17 @@ const pausedMaxDnsQueriesLength = maxDnsQueriesLength * 2;
 
 const trafficSampleLength = 30;
 
+// iOS 27's system colors but the deeper blue of earlier iOS, in the order of the
+// macOS accent colors.
 const defaultPrimaryColors = [
-  0xFF795548,
-  0xFF03A9F4,
-  0xFFFFFF00,
-  0XFFBBC9CC,
-  0XFFABD397,
   defaultPrimaryColor,
-  0XFF665390,
+  0xFFCB30E0,
+  0xFFFF2D55,
+  0xFFFF383C,
+  0xFFFF8D28,
+  0xFFFFCC00,
+  0xFF34C759,
+  0xFF8E8E93,
 ];
 
 const scriptTemplate = '''

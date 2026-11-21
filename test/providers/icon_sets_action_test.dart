@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/database/database.dart' as db;
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/database.dart';
@@ -23,8 +22,8 @@ String _iconSetJson(String name, List<String> icons) => json.encode({
   ],
 });
 
-/// Real downloads over loopback: the test binding would answer every request
-/// with a 400, so this suite runs without it.
+/// Real downloads over loopback: the test binding answers every request with a
+/// 400, so its override is lifted while a test runs.
 void main() {
   late HttpServer server;
   late String body;
@@ -33,7 +32,7 @@ void main() {
   late ProviderContainer container;
 
   setUpAll(() async {
-    await AppLocalizations.load(const Locale('en'));
+    loadAppLocalizations(const Locale('en'));
     globalState.packageInfo = PackageInfo(
       appName: 'FlClash',
       packageName: 'com.follow.clash',
@@ -56,6 +55,9 @@ void main() {
   tearDownAll(() => server.close(force: true));
 
   setUp(() {
+    final bindingOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = bindingOverrides);
     held = null;
     testDatabase = db.Database(NativeDatabase.memory());
     db.database = testDatabase;

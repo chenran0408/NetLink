@@ -7,19 +7,19 @@ import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/enum/enum.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
 import 'package:yaml/yaml.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
@@ -498,6 +498,94 @@ rules:
       expect(config.rules.single.ruleTarget, 'G');
     });
 
+    test('takes a proxy the file repeats whole as its first holder', () {
+      final config = _read('''
+proxies:
+  - {name: A, type: ss, server: a.example.com, dialer-proxy: G}
+  - {name: A, type: ss, server: a.example.com, dialer-proxy: H}
+proxy-groups:
+  - {name: G, type: select, proxies: [A]}
+  - {name: H, type: select, proxies: [A]}
+''');
+
+      expect([for (final proxy in config.proxies) proxy['name']], ['A']);
+      expect(config.dialers, {'A': 'G'});
+    });
+
+    test('moves a proxy, not the file\'s group of its name, off another '
+        'profile\'s groups', () {
+      final config = _read('''
+proxies:
+  - {name: Auto, type: ss, server: a.example.com}
+proxy-groups:
+  - {name: Auto, type: select, proxies: [DIRECT]}
+''', _app(groupNames: {'Auto'}));
+
+      expect([for (final proxy in config.proxies) proxy['name']], ['Auto-01']);
+      expect(config.proxyGroups.single.name, 'Auto');
+    });
+
+    test('tells accounts of a type without credentials by its key', () {
+      List<Object?> namesOf(String proxy, String held) => [
+        for (final item in _read(
+          'proxies:\n  - $proxy\n',
+          _app(proxies: [Map.of(loadYaml(held) as Map).cast()]),
+        ).proxies)
+          item['name'],
+      ];
+      const held = '{name: S, type: snell, server: s.example.com, psk: old}';
+
+      expect(
+        namesOf(
+          '{name: S, type: snell, server: s.example.com, psk: old, udp: true}',
+          held,
+        ),
+        isEmpty,
+      );
+      expect(
+        namesOf(
+          '{name: S, type: snell, server: s.example.com, psk: new}',
+          held,
+        ),
+        ['S-01'],
+      );
+    });
+
+    test('reads names trimmed, with references following', () {
+      final config = _read(
+        '''
+proxies:
+  - {name: "HK ", type: ss, server: new.example.com}
+proxy-groups:
+  - {name: " G", type: select, proxies: ["HK "]}
+rules:
+  - MATCH,G
+''',
+        _app(
+          proxies: [
+            {'name': 'HK', 'type': 'ss', 'server': 'old.example.com'},
+          ],
+        ),
+      );
+
+      expect([for (final proxy in config.proxies) proxy['name']], ['HK-01']);
+      expect(config.proxyGroups.single.name, 'G');
+      expect(config.proxyGroups.single.proxies, ['HK-01']);
+    });
+
+    test('names a proxy without one after its server', () {
+      final config = _read('''
+proxies:
+  - {type: ss, server: a.example.com}
+  - {type: ss, server: b.example.com}
+''');
+
+      expect(
+        [for (final proxy in config.proxies) proxy['name']],
+        ['a.example.com', 'b.example.com'],
+      );
+    });
+
     test('moves a proxy off a name the Core keeps, but not a group', () {
       final config = _read('''
 proxies:
@@ -513,23 +601,50 @@ proxy-groups:
       expect(config.proxyGroups.single.name, 'GLOBAL');
     });
 
-    test(
-      'drops include-all-providers and keeps the proxies of include-all',
-      () {
-        final config = _read('''
+    test('keeps the keys that take in every proxy or provider', () {
+      final config = _read('''
 proxy-groups:
-  - {name: All, type: select, include-all: true}
+  - {name: Plain, type: select, proxies: [DIRECT], include-all: false}
+  - {name: All, type: select, proxies: [DIRECT], include-all: true}
   - {name: Providers, type: select, include-all-providers: true}
 ''');
 
-        final [all, providers] = config.proxyGroups;
-        expect(all.includeAll, isNull);
-        expect(all.includeAllProxies, isTrue);
-        expect(all.includeAllProviders, isNull);
-        expect(providers.includeAllProviders, isNull);
-        expect(providers.includeAllProxies, isNull);
-      },
-    );
+      final [plain, all, providers] = config.proxyGroups;
+      expect(plain.definition, {
+        'name': 'Plain',
+        'type': 'select',
+        'proxies': ['DIRECT'],
+      });
+      expect(all.definition, {
+        'name': 'All',
+        'type': 'select',
+        'proxies': ['DIRECT'],
+        'include-all-proxies': true,
+        'include-all-providers': true,
+      });
+      expect(providers.definition, {
+        'name': 'Providers',
+        'type': 'select',
+        'include-all-providers': true,
+      });
+    });
+
+    test('drops the SUB-RULE lines, since there are no sub-rules', () {
+      final config = _read('''
+rules:
+  - SUB-RULE,(NETWORK,tcp),streaming
+  - MATCH,DIRECT
+sub-rules:
+  streaming:
+    - DOMAIN,video.example,DIRECT
+''');
+
+      expect(
+        [for (final rule in config.rules) rule.rawValue],
+        ['MATCH,DIRECT'],
+      );
+      expect(config.droppedSubRules, 1);
+    });
 
     test('renames the proxies DNS servers dial through', () {
       final config = _read(
@@ -655,12 +770,9 @@ tun:
     late List<String> compiledUrls;
 
     setUp(() async {
-      await AppLocalizations.load(const Locale('en'));
+      loadAppLocalizations(const Locale('en'));
       home = Directory.systemTemp.createTempSync('flclash-custom-import-');
-      AppPath.supportDirectory = () async => home;
-      AppPath.temporaryDirectory = () async => home;
-      AppPath.cacheDirectory = () async => home;
-      AppPath.downloadDirectory = () async => home;
+      await useAppPaths(home);
       testDatabase = db.Database(NativeDatabase.memory());
       db.database = testDatabase;
       await testDatabase.profiles.put(custom.toCompanion());
@@ -687,7 +799,7 @@ tun:
       );
       compiledUrls = [];
       final core = _MockCoreHandlerInterface();
-      when(() => core.validateConfig(any())).thenAnswer((_) async => '');
+      when(() => core.validateConfig(any())).thenAnswer((_) async => null);
       when(() => core.compileRuleSet(any(), url: any(named: 'url'))).thenAnswer(
         (invocation) async {
           compiledUrls.add(invocation.namedArguments[#url] as String);

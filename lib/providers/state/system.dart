@@ -2,28 +2,46 @@ part of '../state.dart';
 
 @riverpod
 UpdateParams updateParams(Ref ref) {
-  final bypassPrivateRoute = ref.watch(
-    networkSettingProvider.select((state) => state.bypassPrivateRoute),
-  );
   final authentication = ref.watch(
     networkSettingProvider.select((state) => state.authentication),
   );
-  final checkCertificate = ref.watch(
-    appSettingProvider.select((state) => state.checkCertificate),
-  );
+  final options = ref.watch(coreOptionsProvider);
   return ref.watch(
     patchClashConfigProvider.select(
       (state) => state.toUpdateParams(
-        bypassPrivateRoute: bypassPrivateRoute,
         authentication: authentication.credentials,
-        skipCertVerify: !checkCertificate,
+        options: options,
       ),
     ),
   );
 }
 
 @riverpod
-({PatchClashConfig patchConfig, bool appendSystemDns}) setupPatch(Ref ref) {
+CoreOptions coreOptions(Ref ref) {
+  final (:testUrl, :mitmCapture) = ref.watch(
+    patchClashConfigProvider.select(
+      (state) => (testUrl: state.testUrl, mitmCapture: state.mitm.capture),
+    ),
+  );
+  final (:checkCertificate, :delayTestTimeout) = ref.watch(
+    appSettingProvider.select(
+      (state) => (
+        checkCertificate: state.checkCertificate,
+        delayTestTimeout: state.delayTestTimeout,
+      ),
+    ),
+  );
+  return CoreOptions(
+    testUrl: testUrl,
+    skipCertVerify: !checkCertificate,
+    delayTestTimeout: delayTestTimeout,
+    mitmCapture: rsFeature && mitmCapture,
+  );
+}
+
+@riverpod
+({PatchClashConfig patchConfig, bool appendSystemDns, bool bypassPrivateRoute})
+setupPatch(Ref ref) {
   return (
     patchConfig: ref.watch(
       patchClashConfigProvider.select((state) => state.setupOnly),
@@ -31,6 +49,12 @@ UpdateParams updateParams(Ref ref) {
     appendSystemDns: ref.watch(
       networkSettingProvider.select((state) => state.appendSystemDns),
     ),
+    // Android's VPN service takes it on its next start instead.
+    bypassPrivateRoute:
+        system.isDesktop &&
+        ref.watch(
+          networkSettingProvider.select((state) => state.bypassPrivateRoute),
+        ),
   );
 }
 
@@ -51,13 +75,17 @@ TrayState trayState(Ref ref) {
   );
   final appSetting = ref.watch(
     appSettingProvider.select(
-      (state) =>
-          (autoLaunch: state.autoLaunch, showTrayTitle: state.showTrayTitle),
+      (state) => (
+        autoLaunch: state.autoLaunch,
+        showTrayTitle: state.showTrayTitle,
+        monochromeTrayIcon: state.monochromeTrayIcon,
+      ),
     ),
   );
   final groups = ref.watch(currentGroupsStateProvider).value;
   final selectedMap = ref.watch(selectedMapProvider);
   final safeMode = ref.watch(safeModeProvider);
+  final suspended = ref.watch(suspendProvider);
   final hotKeys = _trayHotKeys(ref);
 
   return TrayState(
@@ -67,9 +95,11 @@ TrayState trayState(Ref ref) {
     systemProxy: systemProxy,
     tunEnable: clashConfig.tunEnable,
     isStart: isStart,
+    suspended: isStart && suspended,
     groups: groups,
     selectedMap: selectedMap,
     showTrayTitle: appSetting.showTrayTitle,
+    monochromeTrayIcon: appSetting.monochromeTrayIcon,
     safeMode: safeMode,
     hotKeys: hotKeys,
   );
@@ -97,7 +127,7 @@ Map<String, Map<String, int>> trayDelays(Ref ref) {
   final allGroups = ref.watch(groupsProvider);
   final selectedMap = ref.watch(selectedMapProvider);
   final defaultTestUrl = ref.watch(
-    appSettingProvider.select((state) => state.testUrl),
+    patchClashConfigProvider.select((state) => state.testUrl),
   );
   final delays = <String, Map<String, int>>{};
   for (final group in groups) {
@@ -134,18 +164,6 @@ TrayTitleState trayTitleState(Ref ref) {
 }
 
 @riverpod
-PackageListSelectorState packageListSelectorState(Ref ref) {
-  final packages = ref.watch(packagesProvider);
-  final accessControlProps = ref.watch(
-    vpnSettingProvider.select((state) => state.accessControlProps),
-  );
-  return PackageListSelectorState(
-    packages: packages,
-    accessControlProps: accessControlProps,
-  );
-}
-
-@riverpod
 HotKeyAction getHotKeyAction(Ref ref, HotAction hotAction) {
   return ref.watch(
     hotKeyActionsProvider.select((state) {
@@ -153,24 +171,6 @@ HotKeyAction getHotKeyAction(Ref ref, HotAction hotAction) {
       return index != -1 ? state[index] : HotKeyAction(action: hotAction);
     }),
   );
-}
-
-@riverpod
-bool shouldPatchSystemDns(Ref ref) {
-  final autoSetSystemDns = ref.watch(
-    networkSettingProvider.select((state) => state.autoSetSystemDns),
-  );
-  if (!autoSetSystemDns || ref.watch(safeModeProvider)) {
-    return false;
-  }
-  final isStart = ref.watch(runTimeProvider.select((state) => state != null));
-  final tunEnable = ref.watch(
-    patchClashConfigProvider.select((state) => state.tun.enable),
-  );
-  final authorizationState = ref.watch(authorizedTunEnableProvider);
-  return isStart &&
-      tunEnable &&
-      authorizationState == TunAuthorizationState.authorized;
 }
 
 @riverpod
@@ -189,8 +189,6 @@ SharedState sharedState(Ref ref) {
       (state) => (
         onlyStatisticsProxy: state.onlyStatisticsProxy,
         showStopAction: state.showNotificationStopAction,
-        crashlytics: state.crashlytics,
-        testUrl: state.testUrl,
         checkCertificate: state.checkCertificate,
       ),
     ),
@@ -198,28 +196,25 @@ SharedState sharedState(Ref ref) {
   final currentProfileName = currentProfile.label;
   final selectedMap = currentProfile.selectedMap;
   final onlyStatisticsProxy = appSetting.onlyStatisticsProxy;
-  final crashlytics = appSetting.crashlytics;
-  final testUrl = appSetting.testUrl;
   return SharedState(
     currentProfileName: currentProfileName,
     onlyStatisticsProxy: onlyStatisticsProxy,
     showStopAction: appSetting.showStopAction,
     stopText: currentAppLocalizations.stop,
-    crashlytics: crashlytics,
     stopTip: currentAppLocalizations.stopVpn,
     startTip: currentAppLocalizations.startVpn,
     localNetworkTip: currentAppLocalizations.localNetworkDeniedTip,
     setupParams: SetupParams(
       selectedMap: selectedMap,
-      testUrl: testUrl,
-      skipCertVerify: !appSetting.checkCertificate,
+      options: ref.watch(coreOptionsProvider),
     ),
     vpnOptions: ref.watch(vpnOptionsProvider).value,
   );
 }
 
 @Riverpod(keepAlive: true)
-Future<List<String>> vpnRouteAddress(Ref ref) {
+Future<List<String>> vpnRouteAddress(Ref ref) async {
+  final modules = ref.watch(mitmModuleNetworkProvider.future);
   final routes = ref.watch(
     patchClashConfigProvider.select(
       (state) => Tun(
@@ -231,7 +226,18 @@ Future<List<String>> vpnRouteAddress(Ref ref) {
   final bypassPrivateRoute = ref.watch(
     networkSettingProvider.select((state) => state.bypassPrivateRoute),
   );
-  return routes.vpnRouteAddress(bypassPrivateRoute: bypassPrivateRoute);
+  final network = await modules;
+  return routes
+      .copyWith(
+        routeAddress: routes.routeAddress.isEmpty
+            ? const []
+            : {...routes.routeAddress, ...network.routeAddress}.toList(),
+        routeExcludeAddress: {
+          ...routes.routeExcludeAddress,
+          ...?network.routeExcludeAddress?.values,
+        }.toList(),
+      )
+      .vpnRouteAddress(bypassPrivateRoute: bypassPrivateRoute);
 }
 
 @Riverpod(keepAlive: true)
@@ -252,6 +258,7 @@ Future<VpnOptions> vpnOptions(Ref ref) async {
   final vpnSetting = ref.watch(vpnSettingProvider);
   final safeMode = ref.watch(safeModeProvider);
   final routeAddress = ref.watch(vpnRouteAddressProvider.future);
+  final modules = ref.watch(mitmModuleNetworkProvider.future);
   final tun = clashConfig.tun;
   return VpnOptions(
     enable: vpnSetting.enable && !safeMode,
@@ -265,7 +272,9 @@ Future<VpnOptions> vpnOptions(Ref ref) async {
     dnsHijacking: vpnSetting.dnsHijacking,
     accessControlProps: vpnSetting.accessControlProps,
     allowBypass: vpnSetting.allowBypass,
-    bypassDomain: networkSetting.bypassDomain,
+    bypassDomain:
+        (await modules).bypassDomain?.applyTo(networkSetting.bypassDomain) ??
+        networkSetting.bypassDomain,
     routeAddress: await routeAddress,
     mtu: tun.mtu,
     congestionController: tun.congestionController,
@@ -275,8 +284,10 @@ Future<VpnOptions> vpnOptions(Ref ref) async {
 @riverpod
 class AccessControlState extends _$AccessControlState
     with AutoDisposeNotifierMixin {
+  /// A draft of the saved props, which the access page edits until it saves.
   @override
-  AccessControlProps build() => const AccessControlProps();
+  AccessControlProps build() =>
+      ref.read(vpnSettingProvider.select((state) => state.accessControlProps));
 }
 
 @riverpod
@@ -284,4 +295,34 @@ bool suspend(Ref ref) {
   final currentSSID = ref.watch(currentSSIDProvider);
   final excludeSSIDs = ref.watch(excludeSSIDsProvider);
   return excludeSSIDs.contains(currentSSID);
+}
+
+/// Keeps a start on screen for [minimumStart] so a fast restart does not flash.
+@riverpod
+class HeldCoreStatus extends _$HeldCoreStatus {
+  static const minimumStart = Duration(milliseconds: 1500);
+
+  Timer? _hold;
+
+  @override
+  CoreStatus build() {
+    ref.onDispose(() => _hold?.cancel());
+    ref.listen(coreStatusProvider, (_, next) {
+      switch (next) {
+        case CoreStatus.connecting:
+          _hold ??= Timer(minimumStart, () {
+            _hold = null;
+            state = ref.read(coreStatusProvider);
+          });
+          state = next;
+        case CoreStatus.disconnected:
+          _hold?.cancel();
+          _hold = null;
+          state = next;
+        case CoreStatus.connected:
+          if (_hold == null) state = next;
+      }
+    });
+    return ref.read(coreStatusProvider);
+  }
 }

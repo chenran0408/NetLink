@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: v0.9.1
+        default: v0.9.4
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: '3.47.6'
+  FLUTTER_VERSION: '3.50.0'
   GO_VERSION: '1.27.1'
   NDK_VERSION: r28c
 
@@ -31,15 +31,18 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Check release tag
+      - name: Check release version
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=$(awk '/^version:/ {print $2}' pubspec.yaml | tr -d '\r')
+          test "$TAG" = "v${version%%+*}"
           if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Tag already exists: $TAG" >&2
             exit 1
           fi
+          echo "APP_VERSION=${version%%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD=${version##*+}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v5
         with:
@@ -71,27 +74,30 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Regenerate translated app text
+      - name: Install Linux test dependencies
         run: |
-          yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
-          dart run intl_utils:generate
-          git restore pubspec.yaml
-          if ! git diff --quiet -- lib/l10n; then
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libsecret-1-dev
+
+      - name: Install dependencies and generate translations
+        run: |
+          flutter pub get
+          flutter gen-l10n
+          dart format lib/common/constant.dart lib/common/release_asset.dart lib/views/about.dart test/common/app_update_test.dart test/common/release_asset_test.dart test/tool/package_test.dart test/widgets/update_dialog_test.dart
+          if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add lib/l10n
-            git commit -m 'build(l10n): generate netlink translations'
+            git add lib/l10n lib/common/constant.dart lib/common/release_asset.dart lib/views/about.dart test/common/app_update_test.dart test/common/release_asset_test.dart test/tool/package_test.dart test/widgets/update_dialog_test.dart
+            git diff --cached --quiet || git commit -m 'build(l10n): generate netlink translations'
             git push origin HEAD:main
           fi
 
       - name: Analyze and test
         run: |
+          dart format --output=none --set-exit-if-changed lib test tool plugins
           flutter analyze --no-fatal-infos
           yq -i '.hooks.user_defines.setup.build_assets = false' pubspec.yaml
-          flutter test test/plugins/app_test.dart test/plugins/service_test.dart test/plugins/tile_test.dart test/setup_test.dart test/l10n test/lint/dynamic_message_key_test.dart
+          dart run tool/test.dart -- --reporter expanded
           git restore pubspec.yaml
 
       - name: Configure release signing
@@ -106,10 +112,20 @@ jobs:
           printf 'keyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n' "$KEY_ALIAS" "$STORE_PASSWORD" "$KEY_PASSWORD" > android/key.properties
           keytool -list -keystore android/app/keystore.jks -alias "$KEY_ALIAS" -storepass:env STORE_PASSWORD
 
+      - name: Refresh trusted CA bundle
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
       - name: Build signed Android packages
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: dart setup.dart android --env stable -v
+          TAG: ${{ inputs.tag }}
+        run: dart tool/package.dart android --env stable --tag "$TAG" -v
 
       - name: Run Android unit tests
         working-directory: android
@@ -126,26 +142,28 @@ jobs:
       - name: Verify packages and checksums
         run: |
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            case "$abi" in
-              armeabi-v7a) code=2026102402 ;;
-              arm64-v8a) code=2026103402 ;;
-              x86_64) code=2026105402 ;;
+          for arch in arm64 armv7 amd64; do
+            case "$arch" in
+              armv7) offset=1000 ;;
+              arm64) offset=2000 ;;
+              amd64) offset=5000 ;;
             esac
-            apk="dist/NetLink-0.9.1-android-$abi.apk"
-            test -f "$apk"
-            "$tools/apksigner" verify --verbose --print-certs "$apk"
-            "$tools/aapt" dump badging "$apk" | tee /tmp/badging.txt
-            grep -q "package: name='io.github.chenran0408.netlink'" /tmp/badging.txt
-            grep -q "application-label:'NetLink'" /tmp/badging.txt
-            grep -q "versionCode='$code'" /tmp/badging.txt
+            code=$((APP_BUILD + offset))
+            apk="dist/NetLink-dev-$APP_VERSION-android-$arch.apk"
+            "$tools/apksigner" verify --verbose --print-certs "$apk" | tee /tmp/signature.txt
+            grep -Fqi '75327fd218d888e7affa935f01d39a6bfe2fa079d52b8373b1672899a2f25766' /tmp/signature.txt
+            "$tools/aapt" dump badging "$apk" > /tmp/badging.txt
+            grep -Fq "package: name='io.github.chenran0408.netlink'" /tmp/badging.txt
+            grep -Fq "application-label:'NetLink'" /tmp/badging.txt
+            grep -Fq "versionCode='$code'" /tmp/badging.txt
+            grep -Fq "versionName='$APP_VERSION'" /tmp/badging.txt
           done
           cd dist
-          sha256sum *.apk > SHA256SUMS
+          sha256sum -c "NetLink-dev-$APP_VERSION-SHA256SUMS"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release create "$TAG" dist/*.apk dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title 'NetLink 0.9.1' --notes-file .github/netlink-release.md --latest
+          gh release create "$TAG" dist/*.apk dist/*-SHA256SUMS dist/manifest.json --target "$(git rev-parse HEAD)" --title "NetLink $APP_VERSION" --notes-file .github/netlink-release.md --latest

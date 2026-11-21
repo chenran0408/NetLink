@@ -11,12 +11,14 @@ import 'package:fl_clash/views/profiles/custom/custom.dart';
 import 'package:fl_clash/views/profiles/custom/providers.dart';
 import 'package:fl_clash/views/profiles/extend/extend.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
+import '../helpers/test_database_providers.dart';
 import '../helpers/test_profiles.dart';
+import '../helpers/host_scaffold.dart';
 
 class _TestProfileRules extends ProfileRules {
   final List<Rule> initial;
@@ -28,6 +30,20 @@ class _TestProfileRules extends ProfileRules {
 
   @override
   void order(int oldIndex, int newIndex) {}
+}
+
+class _StreamedProfileRules extends ProfileRules {
+  final Stream<List<Rule>> rules;
+
+  _StreamedProfileRules(this.rules);
+
+  @override
+  Stream<List<Rule>> build(int profileId) => rules;
+}
+
+class _TestDisabledRuleIds extends ProfileDisabledRuleIds {
+  @override
+  Stream<List<int>> build(int profileId) => Stream.value(const []);
 }
 
 class _TestProxyGroups extends ProxyGroups {
@@ -58,11 +74,28 @@ class _RecordingProfilesAction extends ProfilesAction {
 }
 
 class _RecordingSetupAction extends SetupAction {
+  _RecordingSetupAction({this.applied = true});
+
+  final bool applied;
   int autoApplyCalls = 0;
+  int applyCalls = 0;
+
+  @override
+  Future<bool> inputsApplied() async => applied;
 
   @override
   void autoApplyProfile() {
     autoApplyCalls++;
+  }
+
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    applyCalls++;
+    return true;
   }
 }
 
@@ -111,32 +144,138 @@ void main() {
     );
   }
 
-  testWidgets('unmounting ExtendView applies the profile without using ref', (
-    tester,
-  ) async {
-    setViewport(tester);
-    final profile = Profile.normal();
-    final container = ProviderContainer(
-      overrides: [
-        profilesProvider.overrideWith(() => TestProfiles([profile])),
-        currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
-        profileRulesProvider.overrideWith2((_) => _TestProfileRules([])),
-        clashConfigProvider(profile.id).overrideWithValue(
-          const AsyncData(
-            ClashConfig(
-              proxies: [Proxy(name: 'DIRECT', type: 'Direct')],
+  group('ExtendView', () {
+    Future<_RecordingSetupAction> pumpExtendView(
+      WidgetTester tester, {
+      bool current = true,
+      bool applied = true,
+    }) async {
+      setViewport(tester);
+      final profile = Profile.normal();
+      final setupAction = _RecordingSetupAction(applied: applied);
+      final container = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild(
+            (_, _) => current ? profile.id : profile.id + 1,
+          ),
+          profileRulesProvider.overrideWith2((_) => _TestProfileRules([])),
+          profileDisabledRuleIdsProvider.overrideWith2(
+            (_) => _TestDisabledRuleIds(),
+          ),
+          scriptsProvider.overrideWith(
+            () => TestScripts([
+              Script(id: 10, label: 'alpha', lastUpdateTime: DateTime(2026)),
+            ]),
+          ),
+          clashConfigProvider(profile.id).overrideWithValue(
+            const AsyncData(
+              ClashConfig(
+                proxies: [Proxy(name: 'DIRECT', type: 'Direct')],
+              ),
+            ),
+          ),
+          setupActionProvider.overrideWith(() => setupAction),
+        ],
+      );
+      addTearDown(container.dispose);
+      globalState.container = container;
+      container
+          .read(viewSizeProvider.notifier)
+          .update((_) => const Size(1400, 1000));
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            child: HostScaffold(
+              body: Builder(
+                builder: (context) => TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    CardPageRoute<void>(
+                      builder: (_) => ExtendView(profileId: profile.id),
+                    ),
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
             ),
           ),
         ),
-        setupActionProvider.overrideWith(_RecordingSetupAction.new),
-      ],
-    );
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      return setupAction;
+    }
 
-    await expectAppliesOnUnmount(
-      tester,
-      container,
-      ExtendView(profileId: profile.id),
-    );
+    Future<void> selectScript(WidgetTester tester) async {
+      await tester.tap(find.text(currentAppLocalizations.extendScript));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('alpha'));
+      await tester.pumpAndSettle();
+    }
+
+    Finder applyNowButton() =>
+        find.widgetWithText(FilledButton, currentAppLocalizations.applyNow);
+
+    testWidgets('runs the script ahead of the added rules', (tester) async {
+      await pumpExtendView(tester);
+      final l10n = currentAppLocalizations;
+      expect(find.text(l10n.none), findsOneWidget);
+      expect(find.text(l10n.addedRulesAfterScript), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text(l10n.extendScript)).dy,
+        lessThan(tester.getTopLeft(find.text(l10n.addedRules)).dy),
+      );
+
+      await selectScript(tester);
+      expect(find.text('alpha'), findsOneWidget);
+    });
+
+    testWidgets('offers applying at once only after a change', (tester) async {
+      final setupAction = await pumpExtendView(tester);
+      expect(applyNowButton(), findsNothing);
+
+      await selectScript(tester);
+      expect(setupAction.applyCalls, 0);
+      await tester.tap(applyNowButton());
+      await tester.pumpAndSettle();
+
+      expect(setupAction.applyCalls, 1);
+      expect(find.text(currentAppLocalizations.applied), findsOneWidget);
+      expect(applyNowButton(), findsNothing);
+    });
+
+    testWidgets('offers applying at once what was left unapplied before '
+        'opening', (tester) async {
+      final setupAction = await pumpExtendView(tester, applied: false);
+      expect(applyNowButton(), findsOneWidget);
+
+      await tester.tap(applyNowButton());
+      await tester.pumpAndSettle();
+
+      expect(setupAction.applyCalls, 1);
+      expect(applyNowButton(), findsNothing);
+    });
+
+    testWidgets('applies on leaving without asking', (tester) async {
+      final setupAction = await pumpExtendView(tester);
+      await selectScript(tester);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('open'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(setupAction.autoApplyCalls, 1);
+    });
+
+    testWidgets('offers no apply for a profile not in use', (tester) async {
+      final setupAction = await pumpExtendView(tester, current: false);
+      await selectScript(tester);
+
+      expect(applyNowButton(), findsNothing);
+      expect(setupAction.applyCalls, 0);
+    });
   });
 
   testWidgets(
@@ -233,7 +372,7 @@ void main() {
     }
 
     Finder tile(String label) =>
-        find.ancestor(of: find.text(label), matching: find.byType(CommonCard));
+        find.ancestor(of: find.text(label), matching: find.byType(ListItem));
 
     String? statusOf(WidgetTester tester, String label) {
       final l = currentAppLocalizations;
@@ -251,7 +390,7 @@ void main() {
           .data;
     }
 
-    testWidgets('leads its proxy groups with a tile per section', (
+    testWidgets('leads its proxy groups with a row per section', (
       tester,
     ) async {
       await pumpCustom(
@@ -319,7 +458,7 @@ void main() {
       expect(find.text(l.importFile), findsOneWidget);
     });
 
-    testWidgets('keeps its tiles above an empty group list', (tester) async {
+    testWidgets('keeps its rows above an empty group list', (tester) async {
       await pumpCustom(tester);
 
       final l = currentAppLocalizations;
@@ -337,7 +476,7 @@ void main() {
       await pumpCustom(tester);
       final l = currentAppLocalizations;
       Finder row(String title) =>
-          find.ancestor(of: find.text(title), matching: find.byType(ListTile));
+          find.ancestor(of: find.text(title), matching: find.byType(ListRow));
       Finder state(String title, String text) =>
           find.descendant(of: row(title), matching: find.text(text));
 
@@ -365,17 +504,50 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(TunView), findsOneWidget);
     });
+
+    testWidgets('renames the profile from its title menu', (tester) async {
+      await pumpCustom(tester);
+      final l = currentAppLocalizations;
+      Finder title(String label) =>
+          find.descendant(of: find.byType(AppBar), matching: find.text(label));
+
+      await tester.tap(title('mine'));
+      await tester.pumpAndSettle();
+      expect(find.text(l.runtimeConfig), findsOneWidget);
+      await tester.tap(find.text(l.rename));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(InputDialog),
+          matching: find.byType(EditableText),
+        ),
+        'theirs',
+      );
+      await tester.tap(find.text(l.submit));
+      await tester.pumpAndSettle();
+
+      expect(
+        globalState.container.read(profilesProvider).single.label,
+        'theirs',
+      );
+      expect(title('theirs'), findsOneWidget);
+    });
   });
 
   group('a new custom profile', () {
     ProviderContainer buildContainer(
       List<Profile> profiles, {
       List<ProxyGroup> groups = const [],
+      Stream<List<Rule>>? rules,
     }) {
       final container = ProviderContainer(
         overrides: [
           profilesProvider.overrideWith(() => TestProfiles(profiles)),
-          profileRulesProvider.overrideWith2((_) => _TestProfileRules([])),
+          profileRulesProvider.overrideWith2(
+            (_) => rules == null
+                ? _TestProfileRules([])
+                : _StreamedProfileRules(rules),
+          ),
           proxyGroupsProvider.overrideWith2((_) => _TestProxyGroups(groups)),
           customProfileDataProvider.overrideWith(
             (_, _) => CustomProfileData(
@@ -430,23 +602,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
     }
 
-    testWidgets('replaces the add page and opens under a default name', (
-      tester,
-    ) async {
+    Widget addMenu() => AddProfileMenu(
+      builder: (open) =>
+          FilledButton(onPressed: open, child: const Text('home')),
+    );
+
+    testWidgets('opens from the add menu under a default name', (tester) async {
       setViewport(tester);
       final container = buildContainer(const []);
 
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: TestApp(
-            child: Builder(
-              builder: (context) => FilledButton(
-                onPressed: () => showAddProfilePage(context),
-                child: const Text('home'),
-              ),
-            ),
-          ),
+          child: TestApp(child: addMenu()),
         ),
       );
       await tester.tap(find.text('home'));
@@ -457,7 +625,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(TextFormField), findsNothing);
-      expect(find.byType(AddProfileView, skipOffstage: false), findsNothing);
       expect(editor, findsOneWidget);
       expect(container.read(profilesProvider).single.label, l.unnamed);
 
@@ -466,7 +633,7 @@ void main() {
       expect(container.read(profilesProvider), isEmpty);
     });
 
-    testWidgets('opens in the tab the add sheet came from on desktop', (
+    testWidgets('opens in the tab the add menu came from on desktop', (
       tester,
     ) async {
       setViewport(tester);
@@ -479,16 +646,7 @@ void main() {
           child: TestApp(
             child: Navigator(
               key: tabNavigator,
-              pages: [
-                MaterialPage(
-                  child: Builder(
-                    builder: (context) => FilledButton(
-                      onPressed: () => showAddProfilePage(context),
-                      child: const Text('home'),
-                    ),
-                  ),
-                ),
-              ],
+              pages: [RootPage(child: addMenu())],
               onDidRemovePage: (_) {},
             ),
           ),
@@ -498,21 +656,8 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.tap(find.text(currentAppLocalizations.customProfile));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(find.byType(AddProfileView), findsOneWidget);
-      expect(editor, findsNothing);
-      expect(container.read(profilesProvider), isEmpty);
-
-      await tester.pumpAndSettle();
-      expect(find.byType(AddProfileView, skipOffstage: false), findsNothing);
-      expect(editor, findsNothing);
-
-      await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
 
-      expect(find.byType(AddProfileView, skipOffstage: false), findsNothing);
       expect(
         find.descendant(of: find.byKey(tabNavigator), matching: editor),
         findsOneWidget,
@@ -523,6 +668,97 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
       expect(find.text('home'), findsOneWidget);
       expect(container.read(profilesProvider), isEmpty);
+    });
+
+    testWidgets('starts opening once its rules are in', (tester) async {
+      final profile = Profile.custom(label: 'mine');
+      final rules = StreamController<List<Rule>>();
+      addTearDown(rules.close);
+      final container = buildContainer([profile], rules: rules.stream);
+      setViewport(tester);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            child: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () => BaseNavigator.push(
+                  context,
+                  CustomProfileView(profileId: profile.id),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      final route = ModalRoute.of(tester.element(editor))!;
+      expect(route.animation!.value, 0);
+
+      rules.add(const []);
+      await tester.pump(Duration.zero);
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(route.animation!.value, greaterThan(0));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('builds its proxy groups a frame after the rest, held still', (
+      tester,
+    ) async {
+      final profile = Profile.custom(label: 'mine');
+      final rules = StreamController<List<Rule>>();
+      addTearDown(rules.close);
+      final container = buildContainer(
+        [profile],
+        groups: [
+          for (var id = 1; id <= 8; id++)
+            ProxyGroup(id: id, name: 'G$id', type: GroupType.Selector),
+        ],
+        rules: rules.stream,
+      );
+      setViewport(tester);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            child: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () => BaseNavigator.push(
+                  context,
+                  CustomProfileView(profileId: profile.id),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      final route = ModalRoute.of(tester.element(editor))!;
+      final overview = find.text(currentAppLocalizations.rule);
+      Finder group(int id) => find.text('G$id', skipOffstage: false);
+
+      rules.add(const []);
+      await tester.pump(Duration.zero);
+      expect(overview, findsOneWidget);
+      expect(group(1), findsNothing);
+      expect(route.animation!.value, 0);
+
+      await tester.pump(Duration.zero);
+      expect(group(1), findsOneWidget);
+      expect(route.animation!.value, 0);
+
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(route.animation!.value, greaterThan(0));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('is dropped on leaving it as it was created', (tester) async {

@@ -1,14 +1,15 @@
-import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/features/form/form.dart';
-import 'package:fl_clash/icons/icons.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/providers/app.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
+import 'package:prism_ui/prism_ui.dart';
+import '../helpers/host_scaffold.dart';
 
 class _EditorHarness extends StatelessWidget {
   final ValueNotifier<List<String>?> items;
@@ -30,7 +31,7 @@ class _EditorHarness extends StatelessWidget {
       itemsOf: (_) => items.value,
       itemBuilder:
           (context, ref, item, index, isEditing, isSelected, onToggleSelected) {
-            return ListTile(
+            return TestRow(
               title: Text(item),
               onTap: onToggleSelected,
               trailing: isSelected ? const GlyphIcon(AppGlyphs.check) : null,
@@ -39,7 +40,6 @@ class _EditorHarness extends StatelessWidget {
       onReorder: (oldIndex, newIndex) {},
       onAdd: () {},
       emptyLabel: 'Empty',
-      selectionEnabled: true,
       idOf: (item) => item,
       onDelete: onDelete,
       searchFieldsOf: searchable ? (item) => [item] : null,
@@ -50,7 +50,7 @@ class _EditorHarness extends StatelessWidget {
         viewSizeProvider.overrideWithBuild((_, _) => const Size(1200, 800)),
       ],
       child: inBottomSheet
-          ? Material(
+          ? Surface(
               child: SheetProvider(type: SheetType.bottomSheet, child: page),
             )
           : page,
@@ -66,17 +66,15 @@ Future<void> _search(WidgetTester tester, String query) async {
 }
 
 Future<void> _tapBarAction(WidgetTester tester, String tooltip) async {
-  await tester.tap(
-    find.descendant(of: find.byType(AppBar), matching: find.byTooltip(tooltip)),
-  );
+  await tester.tap(find.byTooltip(tooltip).hitTestable());
   await tester.pumpAndSettle();
 }
 
 Future<void> _answerDialog(WidgetTester tester, {required bool confirm}) async {
   await tester.pumpAndSettle();
-  final localizations = AppLocalizations.current;
+  final localizations = currentAppLocalizations;
   await tester.tap(
-    find.text(confirm ? localizations.confirm : localizations.cancel),
+    find.text(confirm ? localizations.delete : localizations.cancel),
   );
   await tester.pumpAndSettle();
 }
@@ -126,7 +124,7 @@ void main() {
     await tester.tap(find.text('a'));
     await tester.pump();
     expect(find.byGlyph(AppGlyphs.delete), findsOneWidget);
-    expect(find.byTooltip(AppLocalizations.current.selectAll), findsOneWidget);
+    expect(find.byTooltip(currentAppLocalizations.selectAll), findsOneWidget);
 
     await tester.tap(find.text('a'));
     await tester.pump();
@@ -143,11 +141,11 @@ void main() {
 
     await tester.tap(find.text('a'));
     await tester.pump();
-    await tester.tap(find.byTooltip(AppLocalizations.current.selectAll));
+    await tester.tap(find.byTooltip(currentAppLocalizations.selectAll));
     await tester.pump();
     expect(find.byGlyph(AppGlyphs.check), findsNWidgets(3));
 
-    await tester.tap(find.byTooltip(AppLocalizations.current.selectAll));
+    await tester.tap(find.byTooltip(currentAppLocalizations.selectAll));
     await tester.pump();
     expect(find.byGlyph(AppGlyphs.check), findsNothing);
 
@@ -181,7 +179,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester.getBottomLeft(find.widgetWithText(ListTile, 'item 39')).dy,
+      tester.getBottomLeft(find.widgetWithText(TestRow, 'item 39')).dy,
       lessThanOrEqualTo(tester.getTopLeft(find.byType(SearchField)).dy),
     );
 
@@ -195,22 +193,22 @@ void main() {
     addTearDown(items.dispose);
     await tester.pumpWidget(_EditorHarness(items: items, searchable: true));
     await tester.pump();
-    expect(find.byType(ReorderableListView), findsOneWidget);
+    expect(find.byType(PrismReorderableListView), findsOneWidget);
 
     await _search(tester, 'MA');
     expect(find.text('gamma'), findsOneWidget);
     expect(find.text('alpha'), findsNothing);
     expect(find.text('beta'), findsNothing);
-    expect(find.byType(ReorderableListView), findsNothing);
+    expect(find.byType(PrismReorderableListView), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'zeta');
     await tester.pump();
-    expect(find.text(AppLocalizations.current.noSearchResults), findsOneWidget);
+    expect(find.text(currentAppLocalizations.noSearchResults), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), '');
     await tester.pump();
     expect(find.text('alpha'), findsOneWidget);
-    expect(find.byType(ReorderableListView), findsOneWidget);
+    expect(find.byType(PrismReorderableListView), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -235,8 +233,8 @@ void main() {
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'ma');
     await tester.pump();
-    await _tapBarAction(tester, AppLocalizations.current.selectAll);
-    await _tapBarAction(tester, AppLocalizations.current.delete);
+    await _tapBarAction(tester, currentAppLocalizations.selectAll);
+    await _tapBarAction(tester, currentAppLocalizations.delete);
     await _answerDialog(tester, confirm: true);
 
     expect(deleted, {'gamma'});
@@ -262,7 +260,7 @@ void main() {
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'ma');
     await tester.pump();
-    await _tapBarAction(tester, AppLocalizations.current.delete);
+    await _tapBarAction(tester, currentAppLocalizations.delete);
     await _answerDialog(tester, confirm: true);
 
     expect(deleted.single, {'gamma'});
@@ -272,7 +270,7 @@ void main() {
     expect(find.byGlyph(AppGlyphs.check), findsOneWidget);
     expect(
       find.descendant(
-        of: find.widgetWithText(ListTile, 'beta'),
+        of: find.widgetWithText(TestRow, 'beta'),
         matching: find.byGlyph(AppGlyphs.check),
       ),
       findsOneWidget,
@@ -410,7 +408,7 @@ void main() {
     await tester.pump();
 
     expect(find.byGlyph(AppGlyphs.delete), findsNothing);
-    expect(find.byTooltip(AppLocalizations.current.selectAll), findsOneWidget);
+    expect(find.byTooltip(currentAppLocalizations.selectAll), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -425,7 +423,7 @@ void main() {
       itemBuilder:
           (context, ref, item, index, isEditing, isSelected, onToggleSelected) {
             builds[index] = (builds[index] ?? 0) + 1;
-            return ListTile(title: Text(item));
+            return TestRow(title: Text(item));
           },
       itemExtent: 50,
       onReorder: (oldIndex, newIndex) {},
@@ -454,7 +452,14 @@ void main() {
     final arrived = {...builds.keys};
     expect(arrived, isNotEmpty);
     expect(
-      tester.getTopLeft(find.text('item ${arrived.length - 1}')).dy,
+      tester
+          .getTopLeft(
+            find.ancestor(
+              of: find.text('item ${arrived.length - 1}'),
+              matching: find.byType(TestRow),
+            ),
+          )
+          .dy,
       lessThan(600),
     );
 

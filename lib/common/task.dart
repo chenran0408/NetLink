@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/mitm_module.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart';
@@ -17,28 +18,12 @@ Future<T> _decodeJSON<T>(String content) async {
   return json.decode(content);
 }
 
-Future<String> encodeJSONTask<T>(T data) async {
-  return compute<T, String>(_encodeJSON, data);
-}
-
-Future<String> _encodeJSON<T>(T content) async {
-  return json.encode(content);
-}
-
 Future<String> encodeYamlTask<T>(T data) async {
   return compute<T, String>(_encodeYaml, data);
 }
 
 Future<String> _encodeYaml<T>(T content) async {
   return yaml.encode(content);
-}
-
-Future<String> encodeMD5Task(String data) async {
-  return compute<String, String>(_encodeMD5, data);
-}
-
-Future<String> _encodeMD5<T>(String content) async {
-  return content.toMd5();
 }
 
 /// Throws [FormatException] when the file is not UTF-8.
@@ -90,34 +75,90 @@ Future<List<Group>> buildGroups(ComputeGroupsState state) async {
 }
 
 Future<ClashConfig> clashConfigTask(Map<String, dynamic> data) async {
-  return compute<Map<String, dynamic>, ClashConfig>(buildClashConfig, data);
+  return compute<Map<String, dynamic>, ClashConfig>(_buildClashConfig, data);
 }
 
-@visibleForTesting
-ClashConfig buildClashConfig(Map<String, dynamic> configMap) {
-  final clashConfig = ClashConfig.fromJson(configMap);
-  final proxyTypeMap = <String, String>{};
-  for (final proxy in clashConfig.proxies) {
-    proxyTypeMap[proxy.name] = proxy.type;
-  }
-  for (final proxyGroup in clashConfig.proxyGroups) {
-    proxyTypeMap[proxyGroup.name] = proxyGroup.type.value;
-  }
-  return clashConfig.copyWith(proxyTypeMap: proxyTypeMap);
+ClashConfig _buildClashConfig(Map<String, dynamic> configMap) {
+  return ClashConfig.fromJson(configMap);
 }
 
-Future<({String yaml, String md5})> makeRealProfileTask(
-  MakeRealProfileState data,
-) async {
-  return compute<MakeRealProfileState, ({String yaml, String md5})>(
-    _makeRealProfileTask,
-    data,
+typedef ConfigCounts = ({int groups, int proxies, int rules});
+
+typedef RealProfile = ({String yaml, String md5, ConfigCounts counts});
+
+/// Counts what the Core was handed, not what the profile file declares.
+ConfigCounts configCountsOf(Map<Object?, Object?> config) {
+  int lengthOf(Object? value) => value is List ? value.length : 0;
+  return (
+    groups: lengthOf(config['proxy-groups']),
+    proxies: lengthOf(config['proxies']),
+    rules: lengthOf(config['rules']),
   );
 }
 
-Future<({String yaml, String md5})> _makeRealProfileTask(
-  MakeRealProfileState data,
-) async {
+String? lastMatchTarget(List<String> rules) =>
+    matchTargetOf(rules.map(Rule.parse));
+
+String? matchTargetOf(Iterable<Rule> rules) {
+  for (final rule in rules.toList().reversed) {
+    if (rule.ruleAction == RuleAction.MATCH) {
+      final target = rule.ruleTarget;
+      if (target != null && target.isNotEmpty) {
+        return target;
+      }
+    }
+  }
+  return null;
+}
+
+Set<String> outboundNamesOf(Map<dynamic, dynamic> config) => {
+  for (final key in const ['proxies', 'proxy-groups'])
+    if (config[key] case final List<dynamic> items)
+      for (final item in items)
+        if (item case {'name': final String name}) name,
+};
+
+/// mihomo sends DIRECT what no rule matches, MATCH included.
+String Function(String exit) exitTargetResolver({
+  required Map<String, String> targets,
+  required Set<String> outbounds,
+  required String? fallback,
+}) {
+  bool usable(String? target) =>
+      target != null &&
+      (RuleTarget.ruleTargets.contains(target) || outbounds.contains(target));
+  return (exit) {
+    final mapped = targets[exit];
+    if (usable(mapped)) {
+      return mapped!;
+    }
+    if (outbounds.contains(exit)) {
+      return exit;
+    }
+    return fallback ?? RuleTarget.DIRECT.value;
+  };
+}
+
+Map<String, dynamic> inboundConfigOf(
+  PatchClashConfig config, {
+  required List<String> authentication,
+}) => {
+  'mixed-port': config.mixedPort,
+  'port': config.port,
+  'socks-port': config.socksPort,
+  'redir-port': config.redirPort,
+  'tproxy-port': config.tproxyPort,
+  'allow-lan': config.allowLan,
+  // A profile's skip-auth-prefixes could exempt loopback from authentication.
+  'authentication': authentication,
+  'skip-auth-prefixes': const <String>[],
+};
+
+Future<RealProfile> makeRealProfileTask(MakeRealProfileState data) async {
+  return compute<MakeRealProfileState, RealProfile>(_makeRealProfileTask, data);
+}
+
+Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
   final rawConfig = Map.from(data.rawConfig);
   final realPatchConfig = data.realPatchConfig;
   final profilesPath = data.profilesPath;
@@ -190,34 +231,40 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
       rawConfig['interface-name'] = realPatchConfig.interfaceName;
   }
   rawConfig['external-ui-url'] = '';
-  rawConfig['tcp-concurrent'] = realPatchConfig.tcpConcurrent;
-  rawConfig['unified-delay'] = realPatchConfig.unifiedDelay;
-  rawConfig['ipv6'] = realPatchConfig.ipv6;
+  rawConfig.addAll(realPatchConfig.generalOverrideJson);
   rawConfig['log-level'] = realPatchConfig.logLevel.name;
-  rawConfig['port'] = 0;
-  rawConfig['socks-port'] = 0;
   rawConfig['keep-alive-interval'] = realPatchConfig.keepAliveInterval;
   rawConfig['keep-alive-idle'] = realPatchConfig.keepAliveIdle;
   rawConfig['disable-keep-alive'] = realPatchConfig.disableKeepAlive;
   rawConfig['routing-mark'] = realPatchConfig.routingMark;
-  rawConfig['mixed-port'] = realPatchConfig.mixedPort;
-  rawConfig['port'] = realPatchConfig.port;
-  rawConfig['socks-port'] = realPatchConfig.socksPort;
-  rawConfig['redir-port'] = realPatchConfig.redirPort;
-  rawConfig['tproxy-port'] = realPatchConfig.tproxyPort;
+  rawConfig.addAll(
+    inboundConfigOf(realPatchConfig, authentication: data.authentication),
+  );
   rawConfig['find-process-mode'] = realPatchConfig.findProcessMode.name;
-  rawConfig['allow-lan'] = realPatchConfig.allowLan;
-  // The app owns local inbound authentication; a profile-provided
-  // skip-auth-prefixes could silently exempt loopback and defeat it.
-  rawConfig['authentication'] = data.authentication;
-  rawConfig['skip-auth-prefixes'] = [];
   rawConfig['mode'] = realPatchConfig.mode.name;
-  rawConfig['tun'] = {
+  // auto-route is always on, so without auto-detect-interface the core sends
+  // its own outbound back into the TUN unless interface-name binds it, and
+  // interface-name wins over the detected interface anyway. A profile's own
+  // dns-hijack may leave queries to other resolvers unhijacked, so only a
+  // picked key replaces any:53.
+  final tun = {
     if (rawConfig['tun'] is Map) ...rawConfig['tun'] as Map,
+    'dns-hijack': defaultDnsHijack,
     ...overrides.tun.overrideJson(overrides.tunOverrideKeys),
-    ...realPatchConfig.tun.toJson(),
+    ...realPatchConfig.tun.coreJson,
+    'auto-detect-interface': true,
   };
-  rawConfig['geodata-loader'] = realPatchConfig.geodataLoader.name;
+  if (data.bypassPrivateRoute) {
+    tun['route-exclude-address'] = [
+      if (tun['route-exclude-address'] case final List routes) ...routes,
+      ...privateRouteAddress,
+    ];
+  }
+  if (data.defaultTunDnsMode case final mode?
+      when tun['dns-mode'] == null || tun['dns-mode'] == '') {
+    tun['dns-mode'] = mode;
+  }
+  rawConfig['tun'] = tun;
   rawConfig['geo-auto-update'] = realPatchConfig.geoAutoUpdate;
   rawConfig['geo-update-interval'] = realPatchConfig.geoUpdateInterval;
   final snifferOverride = overrides.sniffer.overrideJson(
@@ -239,6 +286,15 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
       }
     }
   }
+  final mitm = mergeMitmModules(realPatchConfig.mitm.hostname, [
+    for (final module in data.mitmModules)
+      parseMitmModule(
+        module.content,
+        values: module.arguments,
+        resources: module.resources,
+      ),
+  ]);
+  rawConfig['mitm'] = realPatchConfig.mitm.coreJson(mitm.mitm);
   if (rawConfig['profile'] == null) {
     rawConfig['profile'] = {};
   }
@@ -256,10 +312,25 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
     };
   }
 
+  final attachedRuleSets = {
+    for (final MapEntry(:key, :value) in mitm.ruleProviders.entries)
+      if (value['type'] == 'file') key: value,
+  };
+  if (mitm.ruleProviders.length > attachedRuleSets.length) {
+    final providers = rawConfig['rule-providers'];
+    rawConfig['rule-providers'] = {
+      if (providers is Map) ...providers.cast<String, dynamic>(),
+      for (final MapEntry(:key, :value) in mitm.ruleProviders.entries)
+        if (!attachedRuleSets.containsKey(key)) key: value,
+    };
+  }
   confineProviders('proxy-providers', proxiesProviderDirectoryName);
   confineProviders('rule-providers', rulesProviderDirectoryName);
   injectUnconfinedProviders('proxy-providers', data.injectedProxyProviders);
-  injectUnconfinedProviders('rule-providers', data.injectedRuleProviders);
+  injectUnconfinedProviders('rule-providers', {
+    ...data.injectedRuleProviders,
+    ...attachedRuleSets,
+  });
   rawConfig['profile']['store-selected'] = false;
   rawConfig['geox-url'] = realPatchConfig.geoXUrl.raw;
   rawConfig['global-ua'] = realPatchConfig.globalUa ?? defaultUA;
@@ -269,6 +340,7 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
   for (final host in realPatchConfig.hosts.entries) {
     rawConfig['hosts'][host.key] = host.value.splitByMultipleSeparators;
   }
+  (rawConfig['hosts'] as Map).addAll(mitm.network.hosts);
   var rawDns = rawConfig['dns'] is Map
       ? Map<String, dynamic>.from(rawConfig['dns'] as Map)
       : <String, dynamic>{};
@@ -282,11 +354,9 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
   }
   rawDns = mergeDnsOverride(
     rawDns,
-    overrides.dns.overrideJson(
-      overrides.dnsOverrideKeys,
-      keepEmpty: data.keepEmptyDnsOverrides,
-    ),
+    overrides.dns.overrideJson(overrides.dnsOverrideKeys),
   );
+  mitm.network.applyToDns(rawDns);
   rawConfig['dns'] = rawDns;
   final ntpOverride = overrides.ntp.overrideJson(overrides.ntpOverrideKeys);
   if (ntpOverride.isNotEmpty) {
@@ -325,43 +395,18 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
       rules = List<String>.from(rawConfig['rules']);
     }
     if (addedRules.isNotEmpty) {
-      final hasMatchPlaceholder = addedRules.any(
-        (item) => item.ruleTarget?.toUpperCase() == 'MATCH',
+      final exitTarget = exitTargetResolver(
+        targets: data.exitTargets,
+        outbounds: data.outboundNames ?? outboundNamesOf(rawConfig),
+        fallback: data.defaultExitTarget ?? lastMatchTarget(rules),
       );
-      String? replacementTarget = data.matchTarget?.trim();
-      if (replacementTarget?.isEmpty == true) {
-        replacementTarget = null;
-      }
-
-      if (hasMatchPlaceholder && replacementTarget == null) {
-        for (int i = rules.length - 1; i >= 0; i--) {
-          final parsed = Rule.parse(rules[i]);
-          if (parsed.ruleAction == RuleAction.MATCH) {
-            final target = parsed.ruleTarget;
-            if (target != null && target.isNotEmpty) {
-              replacementTarget = target;
-              break;
-            }
-          }
-        }
-      }
-      final List<String> finalAddedRules;
-
-      if (replacementTarget?.isNotEmpty == true) {
-        finalAddedRules = [];
-        for (int i = 0; i < addedRules.length; i++) {
-          final parsed = addedRules[i];
-          if (parsed.ruleTarget?.toUpperCase() == 'MATCH') {
-            finalAddedRules.add(
-              parsed.copyWith(ruleTarget: replacementTarget).rawValue,
-            );
-          } else {
-            finalAddedRules.add(addedRules[i].rawValue);
-          }
-        }
-      } else {
-        finalAddedRules = addedRules.map((e) => e.rawValue).toList();
-      }
+      final finalAddedRules = [
+        for (final rule in addedRules)
+          (rule.customExit && rule.ruleTarget != null
+                  ? rule.copyWith(ruleTarget: exitTarget(rule.ruleTarget!))
+                  : rule)
+              .rawValue,
+      ];
       rules = [...finalAddedRules, ...rules];
     }
   } else {
@@ -372,9 +417,20 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
         .map((item) => item.definition)
         .toList();
   }
-  rawConfig['rules'] = rules;
+  final mitmRules = mitm.exits.isEmpty
+      ? mitm.rules
+      : mitmRulesWithExits(
+          mitm.rules,
+          mitm.exits,
+          exitTargetResolver(
+            targets: data.exitTargets,
+            outbounds: data.outboundNames ?? outboundNamesOf(rawConfig),
+            fallback: data.defaultExitTarget ?? lastMatchTarget(rules),
+          ),
+        );
+  rawConfig['rules'] = [...mitmRules, ...rules];
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
-  return (yaml: yaml, md5: yaml.toMd5());
+  return (yaml: yaml, md5: yaml.toMd5(), counts: configCountsOf(rawConfig));
 }
 
 typedef ShakingStoreArgs = ({
@@ -556,6 +612,7 @@ Future<MigrationData> migrateLegacyConfig({
     final value = rawRule['value'] ?? '';
     rules.add(Rule.parse(value, id: id));
   }
+  final globalRuleIds = [for (final rule in rules) rule.id];
   final List rawProfiles = configMap['profiles'] as List<dynamic>? ?? [];
   final List<Profile> profiles = [];
   for (final rawProfile in rawProfiles) {
@@ -567,6 +624,7 @@ Future<MigrationData> migrateLegacyConfig({
     rawProfile['id'] = profileId;
     final overwrite = rawProfile['overwrite'] as Map?;
     if (overwrite != null) {
+      final isScript = overwrite['type'] == 'script';
       final standardOverwrite = overwrite['standardOverwrite'] as Map?;
       if (standardOverwrite != null) {
         final addedRules = standardOverwrite['addedRules'] as List? ?? [];
@@ -576,7 +634,7 @@ Future<MigrationData> migrateLegacyConfig({
           rules.add(Rule.parse(value, id: id).copyWith(profileId: profileId));
         }
         final disabledRuleIds = standardOverwrite['disabledRuleIds'] as List?;
-        if (disabledRuleIds != null) {
+        if (disabledRuleIds != null && !isScript) {
           for (final disabledRuleId in disabledRuleIds) {
             final newDisabledRuleId = idMap[disabledRuleId];
             if (newDisabledRuleId != null) {
@@ -587,14 +645,17 @@ Future<MigrationData> migrateLegacyConfig({
           }
         }
       }
-      final scriptOverwrite = overwrite['scriptOverwrite'] as Map?;
-      if (scriptOverwrite != null) {
-        final scriptId = scriptOverwrite['scriptId'] as String?;
-        rawProfile['scriptId'] = scriptId != null ? idMap[scriptId] : null;
+      // A script profile used to skip the global rules it now runs with.
+      if (isScript) {
+        for (final ruleId in globalRuleIds) {
+          disabledRules.add(DisabledRule(profileId: profileId, ruleId: ruleId));
+        }
+        final scriptId =
+            (overwrite['scriptOverwrite'] as Map?)?['scriptId'] as String?;
+        if (scriptId != null) {
+          rawProfile['scriptId'] = idMap[scriptId];
+        }
       }
-      rawProfile['extendType'] = overwrite['type'] == ExtendType.script.name
-          ? ExtendType.script.name
-          : ExtendType.standard.name;
     }
     final rawUrl = rawProfile['url'];
     rawProfile['type'] = rawUrl is String && rawUrl.isNotEmpty ? 'url' : 'file';
@@ -620,17 +681,4 @@ Future<MigrationData> migrateLegacyConfig({
     scripts: scripts,
     disabledRules: disabledRules,
   );
-}
-
-Future<List<T>> mapListTask<T, S>(List<S> results, T Function(S) mapper) async {
-  return compute<({List<S> results, T Function(S) mapper}), List<T>>(
-    _mapListTask,
-    (results: results, mapper: mapper),
-  );
-}
-
-Future<List<T>> _mapListTask<T, S>(
-  ({List<S> results, T Function(S) mapper}) args,
-) async {
-  return args.results.map((item) => args.mapper(item)).toList();
 }

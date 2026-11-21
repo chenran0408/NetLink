@@ -1,11 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:fl_clash/icons/icons.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
@@ -80,14 +81,14 @@ void main() {
       expect(find.byType(Image), findsOne);
     });
 
-    testWidgets('waits for the route bringing it in to settle', (tester) async {
+    testWidgets('loads while the route bringing it in arrives', (tester) async {
       const src = 'https://example.com/pushed.png';
       await tester.pumpWidget(
         TestApp(
           child: Builder(
             builder: (context) => TextButton(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
+                HostPageRoute<void>(
                   builder: (_) => const Center(
                     child: IconTheme(
                       data: IconThemeData(size: 32),
@@ -105,19 +106,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(reads, isEmpty);
-      expect(find.byGlyph(AppGlyphs.photos), findsNothing);
-      expect(find.byType(Image), findsNothing);
-
-      await tester.pumpAndSettle();
-
       expect(reads, [src]);
       expect(find.byGlyph(AppGlyphs.photos), findsNothing);
       expect(find.byType(Image), findsOne);
+      await tester.pumpAndSettle();
     });
 
     testWidgets('a page pushed again shows a whole set it loaded before '
-        'through its transition', (tester) async {
+        'from its first frame', (tester) async {
       readRemoteIcon = (src) {
         reads.add(src);
         return Stream.value(Uint8List.fromList(_onePixelPng));
@@ -135,7 +131,7 @@ void main() {
           child: Builder(
             builder: (context) => TextButton(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
+                HostPageRoute<void>(
                   builder: (_) => IconTheme(
                     data: const IconThemeData(size: 32),
                     child: icons,
@@ -147,12 +143,10 @@ void main() {
           ),
         ),
       );
-      reads.clear();
       await tester.tap(find.text('open'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(reads, isEmpty);
       expect(find.byType(Image), findsNWidgets(340));
     });
 
@@ -169,9 +163,57 @@ void main() {
       await _pump(tester, const CommonTargetIcon(src: src));
       await tester.pump();
 
-      expect(tester.widget<RawImage>(find.byType(RawImage)).image!.width, 192);
+      expect(
+        tester.widget<RawImage>(find.byType(RawImage)).image!.width,
+        (48 * tester.view.devicePixelRatio).ceil(),
+      );
       expect(imageCache.currentSize, 1);
     });
+
+    for (final (kind, src, bytes) in [
+      ('a raster icon', 'https://example.com/small.png', _onePixelPng),
+      ('an svg icon', 'https://example.com/star.svg', _svg),
+      ('an unreadable icon', 'https://example.com/broken.png', _broken),
+    ]) {
+      testWidgets('$kind keeps the icon size from loading to loaded', (
+        tester,
+      ) async {
+        final load = StreamController<Uint8List>();
+        readRemoteIcon = (_) => load.stream;
+        await _pump(
+          tester,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CommonTargetIcon(src: src, fallback: const GroupMonogram('p')),
+              const Text('name'),
+            ],
+          ),
+        );
+        final name = tester.getTopLeft(find.text('name'));
+        void expectSteady(String phase) {
+          expect(
+            tester.getSize(find.byType(CommonTargetIcon)),
+            const Size.square(32),
+            reason: phase,
+          );
+          expect(tester.getTopLeft(find.text('name')), name, reason: phase);
+        }
+
+        expectSteady('loading');
+        load.add(Uint8List.fromList(bytes));
+        await tester.pump();
+        expectSteady('read, not decoded');
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+        expectSteady('decoded');
+        await load.close();
+        await tester.pump();
+        expectSteady('loaded');
+      });
+    }
 
     testWidgets('shows the fallback once a load ends without an image', (
       tester,
@@ -204,6 +246,13 @@ Future<Uint8List> _squarePng(int size) async {
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
 }
+
+final _svg = utf8.encode(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+  '<rect width="24" height="24"/></svg>',
+);
+
+final _broken = Uint8List.fromList([1, 2, 3]);
 
 final _onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',

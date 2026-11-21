@@ -20,134 +20,124 @@ part 'generated/route_state.g.dart';
 class RouteState {
   const RouteState({
     this.coreEpoch = 0,
-    this.picksVersion = 0,
-    this.picks = const {},
+    this.routeVersion = 0,
     this.hostEpoch = 0,
     this.proxied = false,
     this.synced = false,
     this.live = false,
     this.resumes = 0,
+    this.picks = 0,
   });
 
   final int coreEpoch;
-  final int picksVersion;
-  final Map<String, String> picks;
+  final int routeVersion;
   final int hostEpoch;
   final bool proxied;
   final bool synced;
   final bool live;
   final int resumes;
+  final int picks;
 
   RouteState copyWith({
     int? coreEpoch,
-    int? picksVersion,
-    Map<String, String>? picks,
+    int? routeVersion,
     int? hostEpoch,
     bool? proxied,
     bool? synced,
     bool? live,
     int? resumes,
+    int? picks,
   }) {
     return RouteState(
       coreEpoch: coreEpoch ?? this.coreEpoch,
-      picksVersion: picksVersion ?? this.picksVersion,
-      picks: picks ?? this.picks,
+      routeVersion: routeVersion ?? this.routeVersion,
       hostEpoch: hostEpoch ?? this.hostEpoch,
       proxied: proxied ?? this.proxied,
       synced: synced ?? this.synced,
       live: live ?? this.live,
       resumes: resumes ?? this.resumes,
+      picks: picks ?? this.picks,
     );
   }
 
-  /// A chain stays fresh while every group on it still picks the hop below
-  /// it; groups the picks do not name, load balancers among them, cannot
-  /// contradict it. An answer with no chain is tied to the selection version
-  /// it was made under instead.
-  bool isFresh(RouteStamp stamp) {
-    if (!synced ||
-        stamp.coreEpoch != coreEpoch ||
-        stamp.hostEpoch != hostEpoch ||
-        stamp.proxied != proxied) {
-      return false;
-    }
-    final chains = stamp.chains;
-    if (chains.isEmpty) {
-      return stamp.picksVersion == picksVersion;
-    }
-    for (var i = chains.length - 1; i >= 1; i--) {
-      final next = picks[chains[i]];
-      if (next != null && next != chains[i - 1]) {
-        return false;
-      }
-    }
-    return true;
-  }
+  bool isFresh(RouteStamp stamp) =>
+      synced && !hasMovedSince(stamp) && stamp.routeVersion == routeVersion;
+
+  bool hasMovedSince(RouteStamp stamp) =>
+      stamp.coreEpoch != coreEpoch ||
+      stamp.hostEpoch != hostEpoch ||
+      stamp.proxied != proxied;
 
   bool isBehind(RouteStamp stamp) =>
-      stamp.coreEpoch > coreEpoch || stamp.picksVersion > picksVersion;
+      stamp.coreEpoch > coreEpoch || stamp.routeVersion > routeVersion;
 
   @override
   bool operator ==(Object other) =>
       other is RouteState &&
       other.coreEpoch == coreEpoch &&
-      other.picksVersion == picksVersion &&
-      mapEquals(other.picks, picks) &&
+      other.routeVersion == routeVersion &&
       other.hostEpoch == hostEpoch &&
       other.proxied == proxied &&
       other.synced == synced &&
       other.live == live &&
-      other.resumes == resumes;
+      other.resumes == resumes &&
+      other.picks == picks;
 
   @override
   int get hashCode => Object.hash(
     coreEpoch,
-    picksVersion,
-    Object.hashAllUnordered(
-      picks.entries.map((entry) => Object.hash(entry.key, entry.value)),
-    ),
+    routeVersion,
     hostEpoch,
     proxied,
     synced,
     live,
     resumes,
+    picks,
   );
 }
 
 /// The route a probe answer was produced under: the Core's counters when it
-/// started, the host's when it was sent, and the chain it went through.
+/// started, the host's when it was sent, and the connections it made.
 @immutable
 class RouteStamp {
   const RouteStamp({
     required this.coreEpoch,
-    required this.picksVersion,
+    required this.routeVersion,
     required this.hostEpoch,
     required this.proxied,
-    this.chains = const [],
+    this.hits = const [],
   });
 
   final int coreEpoch;
-  final int picksVersion;
+  final int routeVersion;
   final int hostEpoch;
   final bool proxied;
-  final List<String> chains;
+  final List<RouteHit> hits;
+
+  RouteStamp verifiedAt(int routeVersion) => RouteStamp(
+    coreEpoch: coreEpoch,
+    routeVersion: routeVersion,
+    hostEpoch: hostEpoch,
+    proxied: proxied,
+    hits: hits,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is RouteStamp &&
       other.coreEpoch == coreEpoch &&
-      other.picksVersion == picksVersion &&
+      other.routeVersion == routeVersion &&
       other.hostEpoch == hostEpoch &&
       other.proxied == proxied &&
-      listEquals(other.chains, chains);
+      listEquals(other.hits, hits);
 
   @override
   int get hashCode => Object.hash(
     coreEpoch,
-    picksVersion,
+    routeVersion,
     hostEpoch,
     proxied,
-    Object.hashAll(chains),
+    Object.hashAll(hits),
   );
 }
 
@@ -171,8 +161,11 @@ class RouteTracker extends _$RouteTracker {
   @override
   RouteState build() {
     ref.onDispose(_cancelRetry);
-    ref.listen(isStartProvider, (_, _) => _scheduleSyncProxied());
-    ref.listen(suspendProvider, (_, _) => _scheduleSyncProxied());
+    final safeMode = ref.read(safeModeProvider);
+    if (safeMode) {
+      ref.listen(isStartProvider, (_, _) => _scheduleSyncProxied());
+      ref.listen(suspendProvider, (_, _) => _scheduleSyncProxied());
+    }
     ref.listen(initProvider, (_, _) => _subscribe());
     ref.listen(appVisibleProvider, (_, visible) {
       if (visible) {
@@ -188,10 +181,12 @@ class RouteTracker extends _$RouteTracker {
         _dropSync();
       }
     });
-    return RouteState(proxied: _proxied);
+    return RouteState(proxied: safeMode && _hostProxied);
   }
 
-  bool get _proxied => ref.read(isStartProvider) && !ref.read(suspendProvider);
+  /// Followed only in safe mode, where the Core never starts its listeners.
+  bool get _hostProxied =>
+      ref.read(isStartProvider) && !ref.read(suspendProvider);
 
   bool get _ready =>
       _watchers > 0 &&
@@ -221,8 +216,8 @@ class RouteTracker extends _$RouteTracker {
   void applySnapshot(RouteSnapshot snapshot) {
     state = state.copyWith(
       coreEpoch: snapshot.coreEpoch,
-      picksVersion: snapshot.picksVersion,
-      picks: snapshot.picks,
+      routeVersion: snapshot.routeVersion,
+      proxied: ref.read(safeModeProvider) ? null : snapshot.running,
       hostEpoch: state.synced ? state.hostEpoch : state.hostEpoch + 1,
       synced: true,
       live: true,
@@ -237,6 +232,10 @@ class RouteTracker extends _$RouteTracker {
     state = state.copyWith(resumes: state.resumes + 1);
   }
 
+  void markPicked() {
+    state = state.copyWith(picks: state.picks + 1);
+  }
+
   /// Deferred because both are computed: unwatched, they go stale, and the
   /// widget that next reads one recomputes it from initState or build.
   void _scheduleSyncProxied() {
@@ -248,7 +247,7 @@ class RouteTracker extends _$RouteTracker {
   }
 
   void _syncProxied() {
-    final proxied = _proxied;
+    final proxied = _hostProxied;
     if (proxied != state.proxied) {
       state = state.copyWith(proxied: proxied);
     }
@@ -318,15 +317,18 @@ class RouteTracker extends _$RouteTracker {
       return;
     }
     unawaited(
-      ref.read(coreHandlerProvider).watchRoute(false).catchError((
-        Object error,
-      ) {
-        commonPrint.log(
-          'watchRoute release failed: $error',
-          logLevel: coreFailureLogLevel(error),
-        );
-        return null;
-      }),
+      ref
+          .read(coreHandlerProvider)
+          .watchRoute(false)
+          .then<void>(
+            (_) {},
+            onError: (Object error) {
+              commonPrint.log(
+                'watchRoute release failed: $error',
+                logLevel: coreFailureLogLevel(error),
+              );
+            },
+          ),
     );
   }
 

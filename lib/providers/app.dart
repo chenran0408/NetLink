@@ -6,6 +6,7 @@ import 'dart:ui' show Locale;
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:flutter/services.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -16,11 +17,51 @@ part 'generated/app.g.dart';
 bool safeMode(Ref ref) => safeModeBuild;
 
 @Riverpod(keepAlive: true)
+App? packageIconSource(Ref ref) => app;
+
+/// Android: su is there and granted FlClash's last request.
+@Riverpod(keepAlive: true)
+Future<bool> rootAccess(Ref ref) async {
+  if (!system.isAndroid || app == null) {
+    return false;
+  }
+  return app!.hasRootAccess();
+}
+
+@Riverpod(keepAlive: true)
 class AuthorizedTunEnable extends _$AuthorizedTunEnable
     with AutoDisposeNotifierMixin {
   @override
   TunAuthorizationState build() {
     return TunAuthorizationState.none;
+  }
+}
+
+@Riverpod(keepAlive: true)
+class UpdateDownloadState extends _$UpdateDownloadState
+    with AutoDisposeNotifierMixin {
+  @override
+  UpdateDownload? build() => null;
+}
+
+@Riverpod(keepAlive: true)
+class CoreCapabilitiesState extends _$CoreCapabilitiesState
+    with AutoDisposeNotifierMixin {
+  @override
+  CoreCapabilities build() => const CoreCapabilities.everything();
+}
+
+/// The warnings of the config the Core last set up; they end with the Core.
+@Riverpod(keepAlive: true)
+class CoreStopReason extends _$CoreStopReason with AutoDisposeNotifierMixin {
+  @override
+  String? build() {
+    ref.listen(coreStatusProvider, (_, next) {
+      if (next != CoreStatus.disconnected) {
+        state = null;
+      }
+    });
+    return null;
   }
 }
 
@@ -61,6 +102,31 @@ class Requests extends _$Requests with AutoDisposeNotifierMixin {
       return;
     }
     this.value = state.append(value);
+  }
+
+  void updateTraffic(Map<String, RequestTraffic> traffic) {
+    if (!ref.mounted) {
+      return;
+    }
+    final pending = Map.of(traffic);
+    final updated = <int, TrackerInfo>{};
+    for (
+      var index = state.length - 1;
+      index >= 0 && pending.isNotEmpty;
+      index--
+    ) {
+      final request = state[index];
+      final item = pending.remove(request.id);
+      if (item != null) {
+        updated[index] = request.copyWith(
+          upload: item.upload,
+          download: item.download,
+        );
+      }
+    }
+    if (updated.isNotEmpty) {
+      value = state.replace(updated);
+    }
   }
 }
 
@@ -220,12 +286,13 @@ class SideWidth extends _$SideWidth with AutoDisposeNotifierMixin {
   }
 }
 
-/// Whether the native window currently draws a backdrop behind the content.
+/// The opacity the sidebar keeps its own color at over the backdrop the native
+/// window draws behind the content, or null while it draws none.
 @Riverpod(keepAlive: true)
 class WindowBlur extends _$WindowBlur with AutoDisposeNotifierMixin {
   @override
-  bool build() {
-    return false;
+  double? build() {
+    return null;
   }
 }
 
@@ -538,14 +605,6 @@ class Items extends _$Items with AutoDisposeNotifierMixin {
   @override
   Set<dynamic> build(String key) {
     return {};
-  }
-}
-
-@riverpod
-class Item extends _$Item with AutoDisposeNotifierMixin {
-  @override
-  dynamic build(String key) {
-    return null;
   }
 }
 

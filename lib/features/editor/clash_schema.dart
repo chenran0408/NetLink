@@ -88,7 +88,7 @@ enum EditorSchema {
   ntp(_ntp, 'ntp'),
   sniffer(_sniffer, 'sniffer'),
   proxy(_proxy),
-  proxyGroup(_proxyGroup, 'proxy-groups'),
+  proxyGroup(_customProxyGroup, 'proxy-groups'),
   rules(_rules),
   shareLinks(_str),
   provider(_providerFile);
@@ -997,7 +997,8 @@ const _proxyVariants = <String, Map<String, YamlSchema>>{
     'udp': _bool,
     ..._tcpDial,
     'psk': _str,
-    'version': YamlSchema.scalar(['1', '2', '3', '4', '5']),
+    'version': YamlSchema.scalar(['1', '2', '3', '4', '5', '6']),
+    'mode': _snellV6Mode,
     'reuse': _bool,
     'client-fingerprint': _clientFingerprint,
     'obfs-opts': YamlSchema.map({
@@ -1282,51 +1283,50 @@ const _healthCheck = YamlSchema.map({
   'expected-status': _str,
 });
 
-const _groupFilters = {
-  'include-all': _bool,
-  'include-all-proxies': _bool,
-  'include-all-providers': _bool,
+const _proxyGroupFields = {
+  'name': _str,
+  'type': YamlSchema.scalar(['select', 'url-test', 'fallback', 'load-balance']),
+  'proxies': YamlSchema.list(_policy),
+  'use': YamlSchema.list(YamlSchema.of(YamlScalar.proxyProvider)),
+  'use-position': YamlSchema.dict(_str),
+  'url': YamlSchema.scalar(['https://www.gstatic.com/generate_204']),
+  'interval': _str,
+  'lazy': _bool,
+  'timeout': _str,
+  'max-failed-times': _str,
+  'empty-fallback': _policy,
+  'expected-status': _str,
   'filter': _str,
   'exclude-filter': _str,
   'exclude-type': _str,
+  'disable-udp': _bool,
+  'hidden': _bool,
+  'icon': _str,
 };
 
-const _proxyGroup = YamlSchema.map(
-  {
-    'name': _str,
-    'type': YamlSchema.scalar([
-      'select',
-      'url-test',
-      'fallback',
-      'load-balance',
+const _proxyGroupVariants = {
+  'select': {'default-selected': _policy},
+  'url-test': {'tolerance': _str},
+  'load-balance': {
+    'strategy': YamlSchema.scalar([
+      'consistent-hashing',
+      'round-robin',
+      'sticky-sessions',
     ]),
-    'proxies': YamlSchema.list(_policy),
-    'use': YamlSchema.list(YamlSchema.of(YamlScalar.proxyProvider)),
-    'use-position': YamlSchema.dict(_str),
-    'url': YamlSchema.scalar(['https://www.gstatic.com/generate_204']),
-    'interval': _str,
-    'lazy': _bool,
-    'timeout': _str,
-    'max-failed-times': _str,
-    'empty-fallback': _policy,
-    'expected-status': _str,
-    ..._groupFilters,
-    'disable-udp': _bool,
-    'hidden': _bool,
-    'icon': _str,
+    'hash-key': YamlSchema.scalar(['in-user']),
   },
-  variants: {
-    'select': {'default-selected': _policy},
-    'url-test': {'tolerance': _str},
-    'load-balance': {
-      'strategy': YamlSchema.scalar([
-        'consistent-hashing',
-        'round-robin',
-        'sticky-sessions',
-      ]),
-      'hash-key': YamlSchema.scalar(['in-user']),
-    },
-  },
+};
+
+const _proxyGroup = YamlSchema.map({
+  ..._proxyGroupFields,
+  'include-all': _bool,
+  'include-all-proxies': _bool,
+  'include-all-providers': _bool,
+}, variants: _proxyGroupVariants);
+
+const _customProxyGroup = YamlSchema.map(
+  _proxyGroupFields,
+  variants: _proxyGroupVariants,
 );
 
 const _providerType = YamlSchema.scalar(['http', 'file', 'inline']);
@@ -1524,6 +1524,8 @@ const _listenerUsers = YamlSchema.list(
 
 const _listenerUserDict = YamlSchema.dict(_str);
 
+const _snellV6Mode = YamlSchema.scalar(['default', 'unshaped', 'unsafe-raw']);
+
 const _fallbackLimit = YamlSchema.map({
   'after-bytes': _str,
   'bytes-per-sec': _str,
@@ -1649,6 +1651,7 @@ const _listener = YamlSchema.map(
     'shadowsocks': {
       'password': _str,
       'cipher': YamlSchema.scalar(_ssCiphers),
+      'users': _listenerUserDict,
       'udp': _bool,
       'mux-option': _muxOption,
       ..._listenerTlsLayers,
@@ -1664,7 +1667,8 @@ const _listener = YamlSchema.map(
     },
     'snell': {
       'psk': _str,
-      'version': YamlSchema.scalar(['1', '2', '3', '4', '5']),
+      'version': YamlSchema.scalar(['1', '2', '3', '4', '5', '6']),
+      'mode': _snellV6Mode,
       'udp': _bool,
       'obfs-opts': YamlSchema.map({
         'mode': YamlSchema.scalar(['http', 'tls']),
@@ -1851,6 +1855,7 @@ const _listener = YamlSchema.map(
       'users': _listenerUserDict,
       'traffic-pattern': _str,
       'user-hint-is-mandatory': _bool,
+      'tcp-idle-timeout': _str,
     },
     'sudoku': {
       'key': _str,

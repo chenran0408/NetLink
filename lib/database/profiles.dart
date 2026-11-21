@@ -19,11 +19,16 @@ class Profiles extends Table {
 
   DateTimeColumn get lastUpdateDate => dateTime().nullable()();
 
-  TextColumn get extendType => textEnum<ExtendType>()();
+  /// Older builds pick a script or added rules by it; this build runs both.
+  TextColumn get extendType => text()();
 
   IntColumn get scriptId => integer().nullable()();
 
+  /// Read only by the v25 upgrade, which moves it into [exitTargets].
   TextColumn get matchTarget => text().nullable()();
+
+  TextColumn get exitTargets =>
+      text().map(const StringMapConverter()).nullable()();
 
   IntColumn get autoUpdateDurationMillis => integer()();
 
@@ -101,6 +106,14 @@ class ProfilesDao extends DatabaseAccessor<Database> with _$ProfilesDaoMixin {
     );
   }
 
+  /// The order [query] reads profiles back in.
+  static int compare(Profile a, Profile b) => switch ((a.order, b.order)) {
+    (final x?, final y?) when x != y => x.compareTo(y),
+    (null, _?) => 1,
+    (_?, null) => -1,
+    _ => a.id.compareTo(b.id),
+  };
+
   Future<void> setAll(Iterable<Profile> profiles) async {
     await batch((b) async {
       setAllWithBatch(b, profiles);
@@ -167,9 +180,8 @@ extension RawProfilExt on RawProfile {
       autoUpdate: autoUpdate,
       selectedMap: selectedMap,
       unfoldSet: unfoldSet,
-      extendType: extendType,
       scriptId: scriptId,
-      matchTarget: matchTarget,
+      exitTargets: exitTargets ?? const {},
       order: order,
       overrides: overrides ?? const ProfileOverrides(),
     );
@@ -191,9 +203,9 @@ extension ProfilesCompanionExt on Profile {
       autoUpdate: autoUpdate,
       selectedMap: selectedMap,
       unfoldSet: unfoldSet,
-      extendType: extendType,
+      extendType: scriptId == null ? 'standard' : 'script',
       scriptId: Value(scriptId),
-      matchTarget: Value(matchTarget),
+      exitTargets: Value(exitTargets),
       order: Value(order ?? this.order),
       overrides: Value(overrides),
     );
