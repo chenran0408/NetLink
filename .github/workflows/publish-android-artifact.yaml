@@ -1,0 +1,77 @@
+name: Publish existing Android build
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Android build run with preserved artifacts
+        required: true
+        default: '44911605872'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'chenran0408/NetLink' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify source build checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" > /tmp/jobs.json
+          jq -e '[.jobs[].steps[] | select(.name == "Analyze and test" or .name == "Build signed Android packages" or .name == "Run Android unit tests")] | length == 3 and all(.[]; .conclusion == "success")' /tmp/jobs.json
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
+          version=$(git show "$sha:pubspec.yaml" | awk '/^version:/ {print $2}' | tr -d '\r')
+          echo "BUILD_SHA=$sha" >> "$GITHUB_ENV"
+          echo "APP_VERSION=${version%%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD=${version##*+}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: netlink-android
+          path: dist
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify preserved Android packages
+        run: |
+          jq -e --arg sha "$BUILD_SHA" '.artifacts | length == 3 and all(.[]; .commit == $sha)' dist/manifest.json
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          for arch in arm64 armv7 amd64; do
+            case "$arch" in
+              armv7) offset=1000 ;;
+              arm64) offset=2000 ;;
+              amd64) offset=4000 ;;
+            esac
+            code=$((APP_BUILD + offset))
+            apk="dist/NetLink-dev-$APP_VERSION-android-$arch.apk"
+            "$tools/apksigner" verify --verbose --print-certs "$apk" | tee /tmp/signature.txt
+            grep -Fqi '75327fd218d888e7affa935f01d39a6bfe2fa079d52b8373b1672899a2f25766' /tmp/signature.txt
+            "$tools/aapt" dump badging "$apk" > /tmp/badging.txt
+            grep -Fq "package: name='io.github.chenran0408.netlink'" /tmp/badging.txt
+            grep -Fq "application-label:'NetLink'" /tmp/badging.txt
+            grep -Fq "versionCode='$code'" /tmp/badging.txt
+            grep -Fq "versionName='$APP_VERSION'" /tmp/badging.txt
+          done
+          cd dist
+          sha256sum -c "NetLink-dev-$APP_VERSION-SHA256SUMS"
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$APP_VERSION" dist/*.apk dist/*-SHA256SUMS dist/manifest.json --target "$BUILD_SHA" --title "NetLink $APP_VERSION" --notes-file .github/netlink-release.md --latest
