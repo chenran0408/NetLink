@@ -293,10 +293,10 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get sendFromPhonePermissionDenied =>
-      '휴대폰에서 링크를 받으려면 FlClash가 로컬 네트워크에 접근할 수 있도록 \'근처 기기\' 권한이 필요합니다. 앱 설정에서 켜 주세요.';
+      '휴대폰에서 링크를 받으려면 NetLink가 로컬 네트워크에 접근할 수 있도록 \'근처 기기\' 권한이 필요합니다. 앱 설정에서 켜 주세요.';
 
   @override
-  String get sendFromPhonePageTitle => 'FlClash로 링크 보내기';
+  String get sendFromPhonePageTitle => 'NetLink로 링크 보내기';
 
   @override
   String get sendFromPhonePageHint => '구독 링크 또는 프록시 공유 링크';
@@ -311,7 +311,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sendFromPhoneConfirmTitle => '휴대폰에서 받은 링크를 가져올까요?';
 
   @override
-  String get shareQrcodeTip => '다른 기기의 FlClash로 스캔하면 이 프로필을 가져올 수 있습니다.';
+  String get shareQrcodeTip => '다른 기기의 NetLink로 스캔하면 이 프로필을 가져올 수 있습니다.';
 
   @override
   String get qrcodeTooLongTip => '이 링크는 너무 길어 QR 코드로 만들 수 없습니다. 링크 복사를 사용하세요.';
@@ -917,7 +917,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get disclaimerDesc =>
-      'FlClash(이하 \"본 소프트웨어\")를 사용하기 전에 본 고지를 주의 깊게 읽고 충분히 이해해 주세요. \"동의\"를 누르면 아래 내용을 읽고 이해했음을 뜻합니다. 계속하지 않으려면 \"종료\"를 누르세요.';
+      'NetLink(이하 \"본 소프트웨어\")를 사용하기 전에 본 고지를 주의 깊게 읽고 충분히 이해해 주세요. \"동의\"를 누르면 아래 내용을 읽고 이해했음을 뜻합니다. 계속하지 않으려면 \"종료\"를 누르세요.';
 
   @override
   String get disclaimerSoftwareTitle => '소프트웨어의 성격';
@@ -1891,7 +1891,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get helperCorruptTip =>
-      '헬퍼 서비스를 사용할 수 없어 TUN 모드를 켤 수 없습니다. FlClash를 다시 설치하여 복구하세요.';
+      '헬퍼 서비스를 사용할 수 없어 TUN 모드를 켤 수 없습니다. NetLink를 다시 설치하여 복구하세요.';
 
   @override
   String get tunAuthorizationFailed => 'TUN 권한을 얻지 못해 끄기로 되돌렸습니다.';
@@ -1901,12 +1901,12 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String coreBlockedByPolicyTip(Object code) {
-    return 'Windows에서 FlClashCore.exe 실행을 거부했습니다(오류 $code). Smart App Control이나 AppLocker와 같은 앱 제어 정책이 서명되지 않은 프로그램을 차단합니다. 해당 정책에서 FlClash를 허용하거나 정책을 끈 후 다시 시도하세요.';
+    return 'Windows에서 NetLinkCore.exe 실행을 거부했습니다(오류 $code). Smart App Control이나 AppLocker와 같은 앱 제어 정책이 서명되지 않은 프로그램을 차단합니다. 해당 정책에서 NetLink를 허용하거나 정책을 끈 후 다시 시도하세요.';
   }
 
   @override
   String get coreBlockedBySmartAppControlTip =>
-      '서명되지 않아 Windows Smart App Control이 FlClashCore.exe를 차단했습니다. Windows 보안 → 앱 및 브라우저 컨트롤 → Smart App Control 설정에서 끔을 선택한 후 FlClash를 다시 시작하세요. Smart App Control은 Windows를 다시 설치하지 않으면 다시 켤 수 없습니다.';
+      '서명되지 않아 Windows Smart App Control이 NetLinkCore.exe를 차단했습니다. Windows 보안 → 앱 및 브라우저 컨트롤 → Smart App Control 설정에서 끔을 선택한 후 NetLink를 다시 시작하세요. Smart App Control은 Windows를 다시 설치하지 않으면 다시 켤 수 없습니다.';
 
   @override
   String get hideFromList => '목록에서 숨기기';
@@ -2700,7 +2700,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get initFailedTip =>
-      'FlClash를 시작하는 중 오류가 발생하여 계속할 수 없습니다. 세부 정보를 복사하여 문제를 보고하세요. 문제가 계속되면 데이터를 지우면 대개 앱이 다시 시작됩니다.';
+      'NetLink를 시작하는 중 오류가 발생하여 계속할 수 없습니다. 세부 정보를 복사하여 문제를 보고하세요. 문제가 계속되면 데이터를 지우면 대개 앱이 다시 시작됩니다.';
 
   @override
   String get errorDetails => '오류 세부 정보';
@@ -3289,7 +3289,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mitmEnableTip =>
-      '켜면 FlClash가 복호화되는 호스트로 보내는 모든 내용을 읽을 수 있습니다(쿠키와 비밀번호 포함). 재작성이 필요한 호스트에만 켜세요.';
+      '켜면 NetLink가 복호화되는 호스트로 보내는 모든 내용을 읽을 수 있습니다(쿠키와 비밀번호 포함). 재작성이 필요한 호스트에만 켜세요.';
 
   @override
   String get generateCertificate => '인증서 생성';
@@ -3299,7 +3299,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get regenerateCertificateTip =>
-      '새 인증서가 현재 인증서를 대체하며, FlClash는 가능한 경우 현재 인증서를 이 기기의 신뢰할 수 있는 루트에서 제거합니다. 현재 인증서를 신뢰하는 다른 모든 기기에는 새 인증서를 설치해야 합니다.';
+      '새 인증서가 현재 인증서를 대체하며, NetLink는 가능한 경우 현재 인증서를 이 기기의 신뢰할 수 있는 루트에서 제거합니다. 현재 인증서를 신뢰하는 다른 모든 기기에는 새 인증서를 설치해야 합니다.';
 
   @override
   String get exportCertificate => '인증서 내보내기';
@@ -3382,7 +3382,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mitmInstallSystemCaTip =>
-      'root가 감지되어 인증서가 Magisk, KernelSU 또는 APatch 모듈 \"FlClash MITM CA\"로 시스템 신뢰 인증서에 추가됩니다. 이후 이 기기의 모든 앱이 이를 신뢰하며, 개인 키를 가진 사람은 이 기기의 HTTPS 트래픽을 복호화할 수 있습니다. 되돌리려면 인증서를 다시 생성하거나 root 관리자에서 모듈을 제거한 뒤 다시 시작하세요. root가 거부되면 사용자 인증서로 설치합니다.';
+      'root가 감지되어 인증서가 Magisk, KernelSU 또는 APatch 모듈 \"NetLink MITM CA\"로 시스템 신뢰 인증서에 추가됩니다. 이후 이 기기의 모든 앱이 이를 신뢰하며, 개인 키를 가진 사람은 이 기기의 HTTPS 트래픽을 복호화할 수 있습니다. 되돌리려면 인증서를 다시 생성하거나 root 관리자에서 모듈을 제거한 뒤 다시 시작하세요. root가 거부되면 사용자 인증서로 설치합니다.';
 
   @override
   String get mitmInstallUserCaTip =>
@@ -3408,7 +3408,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String mitmOldSystemCertificateLeftTip(Object name) {
-    return '이전 인증서 $name이(가) 시스템의 신뢰할 수 있는 인증서에 남아 있습니다. 루트 관리자에서 FlClash의 루트 권한을 허용한 뒤 다시 생성하거나, 그곳에서 \'FlClash MITM CA\' 모듈을 제거하고 다시 시작하세요.';
+    return '이전 인증서 $name이(가) 시스템의 신뢰할 수 있는 인증서에 남아 있습니다. 루트 관리자에서 NetLink의 루트 권한을 허용한 뒤 다시 생성하거나, 그곳에서 \'NetLink MITM CA\' 모듈을 제거하고 다시 시작하세요.';
   }
 
   @override
@@ -3434,14 +3434,14 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mitmRemoveSystemCertificateTip =>
-      '인증서는 루트 모듈 \'FlClash MITM CA\'가 시스템에 추가했습니다. 루트 관리자에서 FlClash의 루트 권한을 허용한 뒤 다시 시도하거나, 그곳에서 모듈을 제거하고 다시 시작하세요.';
+      '인증서는 루트 모듈 \'NetLink MITM CA\'가 시스템에 추가했습니다. 루트 관리자에서 NetLink의 루트 권한을 허용한 뒤 다시 시도하거나, 그곳에서 모듈을 제거하고 다시 시작하세요.';
 
   @override
   String get mitmDecryptHost => '이 호스트 복호화';
 
   @override
   String mitmDecryptHostTip(Object host) {
-    return '$host을(를) 호스트 이름 목록에 추가할까요? FlClash가 쿠키와 비밀번호를 포함해 이 호스트로 보내는 내용을 읽을 수 있습니다.';
+    return '$host을(를) 호스트 이름 목록에 추가할까요? NetLink가 쿠키와 비밀번호를 포함해 이 호스트로 보내는 내용을 읽을 수 있습니다.';
   }
 
   @override
@@ -3523,7 +3523,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mitmNetworkRisk =>
-      '구성을 생성할 때 아래 네트워크 설정을 변경하며, FlClash에서 같은 항목에 한 설정보다 우선합니다. 모듈을 끄거나 삭제하면 원래대로 돌아갑니다.';
+      '구성을 생성할 때 아래 네트워크 설정을 변경하며, NetLink에서 같은 항목에 한 설정보다 우선합니다. 모듈을 끄거나 삭제하면 원래대로 돌아갑니다.';
 
   @override
   String mitmSkipVerifyRisk(Object hosts) {
@@ -3588,22 +3588,22 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mitmSkipDeviceRule =>
-      '이 규칙에는 FlClash가 읽을 수 없는 기기 또는 네트워크 정보가 필요합니다';
+      '이 규칙에는 NetLink가 읽을 수 없는 기기 또는 네트워크 정보가 필요합니다';
 
   @override
   String get mitmSkipRequirement => '이 기기는 이 줄의 사용 조건을 충족하지 않습니다';
 
   @override
-  String get mitmSkipManagedCa => 'CA 인증서는 FlClash가 관리하며 모듈이 변경할 수 없습니다';
+  String get mitmSkipManagedCa => 'CA 인증서는 NetLink가 관리하며 모듈이 변경할 수 없습니다';
 
   @override
   String get mitmSkipProxies => '모듈은 프록시와 프록시 그룹을 변경할 수 없습니다';
 
   @override
-  String get mitmSkipAppOnly => '원래 앱에만 있는 기능으로, FlClash에는 대응하는 항목이 없습니다';
+  String get mitmSkipAppOnly => '원래 앱에만 있는 기능으로, NetLink에는 대응하는 항목이 없습니다';
 
   @override
-  String get mitmSkipReflect => 'FlClash는 패킷을 보낸 쪽으로 되돌려 보낼 수 없습니다';
+  String get mitmSkipReflect => 'NetLink는 패킷을 보낸 쪽으로 되돌려 보낼 수 없습니다';
 
   @override
   String get mitmSkipConditional => '조건부 재작성은 지원되지 않습니다';
@@ -3756,7 +3756,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get updateNotVerified => '다운로드한 업데이트를 확인할 수 없습니다.';
 
   @override
-  String get updateRestartTip => '업데이트를 설치하기 위해 FlClash가 종료되며, 완료되면 다시 열립니다.';
+  String get updateRestartTip => '업데이트를 설치하기 위해 NetLink가 종료되며, 완료되면 다시 열립니다.';
 
   @override
   String get updateDownloadFailed => '업데이트를 다운로드할 수 없습니다.';

@@ -300,10 +300,10 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get sendFromPhonePermissionDenied =>
-      'Para recibir un enlace desde el teléfono, FlClash necesita el permiso Dispositivos cercanos, que le da acceso a la red local. Actívalo en los ajustes de la aplicación.';
+      'Para recibir un enlace desde el teléfono, NetLink necesita el permiso Dispositivos cercanos, que le da acceso a la red local. Actívalo en los ajustes de la aplicación.';
 
   @override
-  String get sendFromPhonePageTitle => 'Enviar un enlace a FlClash';
+  String get sendFromPhonePageTitle => 'Enviar un enlace a NetLink';
 
   @override
   String get sendFromPhonePageHint =>
@@ -322,7 +322,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get shareQrcodeTip =>
-      'Escanea con FlClash en otro dispositivo para importar este perfil.';
+      'Escanea con NetLink en otro dispositivo para importar este perfil.';
 
   @override
   String get qrcodeTooLongTip =>
@@ -953,7 +953,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get disclaimerDesc =>
-      'Antes de usar FlClash («el Software»), lee atentamente esta declaración y asegúrate de entenderla. Tocar «Aceptar» significa que has leído y entendido lo que sigue. Si no quieres continuar, toca «Salir».';
+      'Antes de usar NetLink («el Software»), lee atentamente esta declaración y asegúrate de entenderla. Tocar «Aceptar» significa que has leído y entendido lo que sigue. Si no quieres continuar, toca «Salir».';
 
   @override
   String get disclaimerSoftwareTitle => 'Naturaleza del software';
@@ -1953,7 +1953,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get helperCorruptTip =>
-      'El servicio auxiliar (Helper) no está disponible; no se puede activar el modo TUN. Reinstala FlClash para restaurarlo.';
+      'El servicio auxiliar (Helper) no está disponible; no se puede activar el modo TUN. Reinstala NetLink para restaurarlo.';
 
   @override
   String get tunAuthorizationFailed =>
@@ -1964,12 +1964,12 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String coreBlockedByPolicyTip(Object code) {
-    return 'Windows se negó a ejecutar FlClashCore.exe (error $code). Una directiva de control de aplicaciones, como Smart App Control o AppLocker, bloquea los programas sin firmar; permite FlClash en esa directiva o desactívala e inténtalo de nuevo.';
+    return 'Windows se negó a ejecutar NetLinkCore.exe (error $code). Una directiva de control de aplicaciones, como Smart App Control o AppLocker, bloquea los programas sin firmar; permite NetLink en esa directiva o desactívala e inténtalo de nuevo.';
   }
 
   @override
   String get coreBlockedBySmartAppControlTip =>
-      'Smart App Control de Windows bloqueó FlClashCore.exe porque no está firmado. Abre Seguridad de Windows → Control de aplicaciones y navegador → Configuración de Smart App Control, elige Desactivado y vuelve a iniciar FlClash. Smart App Control no se puede volver a activar sin reinstalar Windows.';
+      'Smart App Control de Windows bloqueó NetLinkCore.exe porque no está firmado. Abre Seguridad de Windows → Control de aplicaciones y navegador → Configuración de Smart App Control, elige Desactivado y vuelve a iniciar NetLink. Smart App Control no se puede volver a activar sin reinstalar Windows.';
 
   @override
   String get hideFromList => 'Ocultar de la lista';
@@ -2801,7 +2801,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get initFailedTip =>
-      'FlClash encontró un error al iniciarse y no puede continuar. Copia los detalles para informar del problema. Si sigue ocurriendo, borrar los datos suele permitir que la app vuelva a iniciarse.';
+      'NetLink encontró un error al iniciarse y no puede continuar. Copia los detalles para informar del problema. Si sigue ocurriendo, borrar los datos suele permitir que la app vuelva a iniciarse.';
 
   @override
   String get errorDetails => 'Detalles del error';
@@ -3409,7 +3409,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmEnableTip =>
-      'FlClash podrá leer todo lo que se envíe a los hosts descifrados, incluidas cookies y contraseñas. Actívalo solo para los hosts que quieras reescribir.';
+      'NetLink podrá leer todo lo que se envíe a los hosts descifrados, incluidas cookies y contraseñas. Actívalo solo para los hosts que quieras reescribir.';
 
   @override
   String get generateCertificate => 'Generar certificado';
@@ -3419,7 +3419,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get regenerateCertificateTip =>
-      'El nuevo certificado sustituye al actual, que FlClash quita de las raíces de confianza de este dispositivo cuando puede. Cada otro dispositivo que confía en el actual tiene que instalar el nuevo.';
+      'El nuevo certificado sustituye al actual, que NetLink quita de las raíces de confianza de este dispositivo cuando puede. Cada otro dispositivo que confía en el actual tiene que instalar el nuevo.';
 
   @override
   String get exportCertificate => 'Exportar certificado';
@@ -3508,7 +3508,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmInstallSystemCaTip =>
-      'Se detectó root: el certificado se añadirá a los certificados de confianza del sistema como el módulo de Magisk, KernelSU o APatch «FlClash MITM CA». Todas las apps del dispositivo confiarán en él, y quien tenga su clave privada podrá descifrar el tráfico HTTPS del dispositivo. Para deshacerlo, regenera el certificado o quita el módulo en el gestor de root y reinicia. Si se deniega root, se instalará como certificado de usuario.';
+      'Se detectó root: el certificado se añadirá a los certificados de confianza del sistema como el módulo de Magisk, KernelSU o APatch «NetLink MITM CA». Todas las apps del dispositivo confiarán en él, y quien tenga su clave privada podrá descifrar el tráfico HTTPS del dispositivo. Para deshacerlo, regenera el certificado o quita el módulo en el gestor de root y reinicia. Si se deniega root, se instalará como certificado de usuario.';
 
   @override
   String get mitmInstallUserCaTip =>
@@ -3534,7 +3534,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String mitmOldSystemCertificateLeftTip(Object name) {
-    return 'El certificado antiguo, $name, sigue entre los certificados de confianza del sistema. Permite el acceso root a FlClash en tu gestor de root y vuelve a generarlo, o elimina allí el módulo «FlClash MITM CA» y reinicia.';
+    return 'El certificado antiguo, $name, sigue entre los certificados de confianza del sistema. Permite el acceso root a NetLink en tu gestor de root y vuelve a generarlo, o elimina allí el módulo «NetLink MITM CA» y reinicia.';
   }
 
   @override
@@ -3560,14 +3560,14 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmRemoveSystemCertificateTip =>
-      'El módulo root «FlClash MITM CA» añadió el certificado al sistema. Permite el acceso root a FlClash en tu gestor de root y vuelve a intentarlo, o elimina allí el módulo y reinicia.';
+      'El módulo root «NetLink MITM CA» añadió el certificado al sistema. Permite el acceso root a NetLink en tu gestor de root y vuelve a intentarlo, o elimina allí el módulo y reinicia.';
 
   @override
   String get mitmDecryptHost => 'Descifrar este host';
 
   @override
   String mitmDecryptHostTip(Object host) {
-    return '¿Añadir $host a la lista de nombres de host? FlClash podrá leer lo que se le envíe, incluidas cookies y contraseñas.';
+    return '¿Añadir $host a la lista de nombres de host? NetLink podrá leer lo que se le envíe, incluidas cookies y contraseñas.';
   }
 
   @override
@@ -3650,7 +3650,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmNetworkRisk =>
-      'Al generar la configuración, cambia los ajustes de red de abajo, por encima de lo que hayas configurado para esos mismos en FlClash. Al desactivar o eliminar el módulo, se deshace.';
+      'Al generar la configuración, cambia los ajustes de red de abajo, por encima de lo que hayas configurado para esos mismos en NetLink. Al desactivar o eliminar el módulo, se deshace.';
 
   @override
   String mitmSkipVerifyRisk(Object hosts) {
@@ -3716,7 +3716,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmSkipDeviceRule =>
-      'Esta regla necesita datos del dispositivo o de la red que FlClash no puede leer';
+      'Esta regla necesita datos del dispositivo o de la red que NetLink no puede leer';
 
   @override
   String get mitmSkipRequirement =>
@@ -3724,7 +3724,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmSkipManagedCa =>
-      'FlClash gestiona el certificado de la CA; un módulo no puede cambiarlo';
+      'NetLink gestiona el certificado de la CA; un módulo no puede cambiarlo';
 
   @override
   String get mitmSkipProxies =>
@@ -3732,11 +3732,11 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get mitmSkipAppOnly =>
-      'Es una función propia de la app original que FlClash no tiene';
+      'Es una función propia de la app original que NetLink no tiene';
 
   @override
   String get mitmSkipReflect =>
-      'FlClash no puede devolver los paquetes a su remitente';
+      'NetLink no puede devolver los paquetes a su remitente';
 
   @override
   String get mitmSkipConditional =>
@@ -3898,7 +3898,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get updateRestartTip =>
-      'FlClash se cerrará para instalar la actualización y se volverá a abrir al terminar.';
+      'NetLink se cerrará para instalar la actualización y se volverá a abrir al terminar.';
 
   @override
   String get updateDownloadFailed => 'No se pudo descargar la actualización.';

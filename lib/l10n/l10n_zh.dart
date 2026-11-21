@@ -292,10 +292,10 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sendFromPhonePermissionDenied =>
-      '从手机接收链接需要「附近的设备」权限，FlClash 才能访问局域网。请在应用设置中开启。';
+      '从手机接收链接需要「附近的设备」权限，NetLink 才能访问局域网。请在应用设置中开启。';
 
   @override
-  String get sendFromPhonePageTitle => '把链接发送到 FlClash';
+  String get sendFromPhonePageTitle => '把链接发送到 NetLink';
 
   @override
   String get sendFromPhonePageHint => '订阅链接或代理分享链接';
@@ -310,7 +310,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sendFromPhoneConfirmTitle => '导入手机发来的链接？';
 
   @override
-  String get shareQrcodeTip => '在另一台设备上用 FlClash 扫码即可导入此配置。';
+  String get shareQrcodeTip => '在另一台设备上用 NetLink 扫码即可导入此配置。';
 
   @override
   String get qrcodeTooLongTip => '链接过长，无法生成二维码，请改用“复制链接”。';
@@ -913,7 +913,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get disclaimerDesc =>
-      '在使用 FlClash（以下简称“本软件”）前，请仔细阅读并充分理解本声明。点击“同意”表示你已阅读并理解以下内容；如不想继续，可点击“退出”。';
+      '在使用 NetLink（以下简称“本软件”）前，请仔细阅读并充分理解本声明。点击“同意”表示你已阅读并理解以下内容；如不想继续，可点击“退出”。';
 
   @override
   String get disclaimerSoftwareTitle => '软件性质';
@@ -1827,7 +1827,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get inputProxyGroupName => '输入策略组名称';
 
   @override
-  String get helperCorruptTip => 'Helper 服务不可用，无法启用 TUN 模式，请重新安装 FlClash。';
+  String get helperCorruptTip => 'Helper 服务不可用，无法启用 TUN 模式，请重新安装 NetLink。';
 
   @override
   String get tunAuthorizationFailed => '虚拟网卡授权失败，已关闭。';
@@ -1837,12 +1837,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String coreBlockedByPolicyTip(Object code) {
-    return 'Windows 拒绝运行 FlClashCore.exe（错误 $code）。智能应用控制、AppLocker 等应用控制策略会拦截未签名程序，请在该策略中放行 FlClash 或关闭策略后重试。';
+    return 'Windows 拒绝运行 NetLinkCore.exe（错误 $code）。智能应用控制、AppLocker 等应用控制策略会拦截未签名程序，请在该策略中放行 NetLink 或关闭策略后重试。';
   }
 
   @override
   String get coreBlockedBySmartAppControlTip =>
-      'Windows 智能应用控制拦截了未签名的 FlClashCore.exe。请打开 Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置，选择「关闭」后重新启动 FlClash。智能应用控制关闭后无法再开启，除非重装 Windows。';
+      'Windows 智能应用控制拦截了未签名的 NetLinkCore.exe。请打开 Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置，选择「关闭」后重新启动 NetLink。智能应用控制关闭后无法再开启，除非重装 Windows。';
 
   @override
   String get hideFromList => '从列表中隐藏';
@@ -2625,7 +2625,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get initFailedTip =>
-      'FlClash 启动时出错，无法继续运行。可以复制错误详情用于反馈；如果问题反复出现，清除数据后通常可以重新启动。';
+      'NetLink 启动时出错，无法继续运行。可以复制错误详情用于反馈；如果问题反复出现，清除数据后通常可以重新启动。';
 
   @override
   String get errorDetails => '错误详情';
@@ -3175,7 +3175,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mitmEnableTip =>
-      '开启后，FlClash 能读取发往被解密主机的全部内容，包括 Cookie 和密码。请只为需要改写的主机开启。';
+      '开启后，NetLink 能读取发往被解密主机的全部内容，包括 Cookie 和密码。请只为需要改写的主机开启。';
 
   @override
   String get generateCertificate => '生成证书';
@@ -3185,7 +3185,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get regenerateCertificateTip =>
-      '新证书会替换当前证书，FlClash 会尽量把当前证书从本机信任的根证书中移除。信任当前证书的其他设备都需要安装新证书。';
+      '新证书会替换当前证书，NetLink 会尽量把当前证书从本机信任的根证书中移除。信任当前证书的其他设备都需要安装新证书。';
 
   @override
   String get exportCertificate => '导出证书';
@@ -3267,7 +3267,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mitmInstallSystemCaTip =>
-      '检测到 root，证书将以 Magisk、KernelSU 或 APatch 模块“FlClash MITM CA”加入系统信任的根证书。之后本机所有应用都会信任它，持有其私钥的人可以解密本机的 HTTPS 流量。如需撤销，可重新生成证书，或在 root 管理器中移除该模块并重启。若拒绝 root 授权，将改为安装用户证书。';
+      '检测到 root，证书将以 Magisk、KernelSU 或 APatch 模块“NetLink MITM CA”加入系统信任的根证书。之后本机所有应用都会信任它，持有其私钥的人可以解密本机的 HTTPS 流量。如需撤销，可重新生成证书，或在 root 管理器中移除该模块并重启。若拒绝 root 授权，将改为安装用户证书。';
 
   @override
   String get mitmInstallUserCaTip =>
@@ -3293,7 +3293,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String mitmOldSystemCertificateLeftTip(Object name) {
-    return '旧证书 $name 仍在系统信任的证书中。请在 root 管理器中允许 FlClash 使用 root 后重新生成，或在其中移除“FlClash MITM CA”模块并重启。';
+    return '旧证书 $name 仍在系统信任的证书中。请在 root 管理器中允许 NetLink 使用 root 后重新生成，或在其中移除“NetLink MITM CA”模块并重启。';
   }
 
   @override
@@ -3318,14 +3318,14 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mitmRemoveSystemCertificateTip =>
-      '证书由 root 模块“FlClash MITM CA”加入系统。请在 root 管理器中允许 FlClash 使用 root 后再试，或在其中移除该模块并重启手机。';
+      '证书由 root 模块“NetLink MITM CA”加入系统。请在 root 管理器中允许 NetLink 使用 root 后再试，或在其中移除该模块并重启手机。';
 
   @override
   String get mitmDecryptHost => '解密此主机';
 
   @override
   String mitmDecryptHostTip(Object host) {
-    return '要把 $host 加入主机名列表吗？之后 FlClash 能读取发往它的内容，包括 Cookie 和密码。';
+    return '要把 $host 加入主机名列表吗？之后 NetLink 能读取发往它的内容，包括 Cookie 和密码。';
   }
 
   @override
@@ -3406,7 +3406,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mitmNetworkRisk =>
-      '生成配置时，它会修改下列网络设置，并优先于你在 FlClash 中对同一项的设置。关闭或删除模块后即恢复。';
+      '生成配置时，它会修改下列网络设置，并优先于你在 NetLink 中对同一项的设置。关闭或删除模块后即恢复。';
 
   @override
   String mitmSkipVerifyRisk(Object hosts) {
@@ -3415,7 +3415,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String mitmClientSourceRisk(Object addresses) {
-    return '它只为这些客户端解密：$addresses。开启 TUN 时，本机应用经 TUN 地址连入 FlClash，可能因此不再解密。';
+    return '它只为这些客户端解密：$addresses。开启 TUN 时，本机应用经 TUN 地址连入 NetLink，可能因此不再解密。';
   }
 
   @override
@@ -3470,22 +3470,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mitmSkipFinalRule => '模块的规则排在最前面，兜底规则会盖住后面的所有规则';
 
   @override
-  String get mitmSkipDeviceRule => '这类规则依赖 FlClash 读不到的设备或网络信息';
+  String get mitmSkipDeviceRule => '这类规则依赖 NetLink 读不到的设备或网络信息';
 
   @override
   String get mitmSkipRequirement => '这一行的使用条件在本设备上不满足';
 
   @override
-  String get mitmSkipManagedCa => 'CA 证书由 FlClash 管理，模块不能更改';
+  String get mitmSkipManagedCa => 'CA 证书由 NetLink 管理，模块不能更改';
 
   @override
   String get mitmSkipProxies => '模块不能修改节点和策略组';
 
   @override
-  String get mitmSkipAppOnly => '这是原 App 独有的功能，FlClash 没有对应项';
+  String get mitmSkipAppOnly => '这是原 App 独有的功能，NetLink 没有对应项';
 
   @override
-  String get mitmSkipReflect => 'FlClash 不能把数据包原路弹回';
+  String get mitmSkipReflect => 'NetLink 不能把数据包原路弹回';
 
   @override
   String get mitmSkipConditional => '不支持条件重写';
@@ -3634,7 +3634,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get updateNotVerified => '下载的更新未通过校验。';
 
   @override
-  String get updateRestartTip => 'FlClash 将关闭以安装更新，完成后自动重新打开。';
+  String get updateRestartTip => 'NetLink 将关闭以安装更新，完成后自动重新打开。';
 
   @override
   String get updateDownloadFailed => '无法下载更新。';
